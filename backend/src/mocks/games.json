@@ -1,0 +1,104 @@
+[
+  {
+    "id": 413150,
+    "title": "Stardew Valley",
+    "description": "나만의 속도로, 나만의 작은 세상.",
+    "tags": [
+      "힐링",
+      "농장",
+      "혼자서",
+      "친구와 함께"
+    ],
+    "price": 16000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/413150/header.jpg"
+  },
+  {
+    "id": 1245620,
+    "title": "ELDEN RING",
+    "description": "광대한 세계, 끝없는 도전.",
+    "tags": [
+      "오픈월드",
+      "도전",
+      "혼자서"
+    ],
+    "price": 64800,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1245620/header.jpg"
+  },
+  {
+    "id": 1145360,
+    "title": "Hades",
+    "description": "한 번 더 도전하고 싶은 지하세계.",
+    "tags": [
+      "액션",
+      "도전",
+      "스토리",
+      "혼자서"
+    ],
+    "price": 27000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1145360/header.jpg"
+  },
+  {
+    "id": 892970,
+    "title": "Valheim",
+    "description": "친구들과 함께 써 내려가는 모험.",
+    "tags": [
+      "친구와 함께",
+      "협동",
+      "생존",
+      "오픈월드"
+    ],
+    "price": 20500,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/892970/header.jpg"
+  },
+  {
+    "id": 400,
+    "title": "Portal",
+    "description": "상상력을 시험하는 공간 속으로.",
+    "tags": [
+      "퍼즐",
+      "스토리",
+      "혼자서"
+    ],
+    "price": 11000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/400/header.jpg"
+  },
+  {
+    "id": 105600,
+    "title": "Terraria",
+    "description": "파고, 만들고, 함께 탐험하세요.",
+    "tags": [
+      "협동",
+      "탐험",
+      "친구와 함께",
+      "생존"
+    ],
+    "price": 11000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/105600/header.jpg"
+  },
+  {
+    "id": 1091500,
+    "title": "Cyberpunk 2077",
+    "description": "당신의 이야기가 시작되는 도시.",
+    "tags": [
+      "오픈월드",
+      "스토리",
+      "혼자서",
+      "액션"
+    ],
+    "price": 66000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg"
+  },
+  {
+    "id": 1426210,
+    "title": "It Takes Two",
+    "description": "함께여서 가능한 특별한 모험.",
+    "tags": [
+      "협동",
+      "친구와 함께",
+      "퍼즐",
+      "스토리"
+    ],
+    "price": 44000,
+    "image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1426210/header.jpg"
+  }
+]
