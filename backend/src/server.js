@@ -1,93 +1,282 @@
+import { getCachedCatalog } from "./services/ratings-cache.js";
 import express from "express";
-import {
-  games,
-  reviews,
-  enrich,
-  keywords,
-  search,
-  recommend,
-} from "./services/catalog.js";
 import { fileURLToPath } from "node:url";
-const app = express();
-app.use(express.json({ limit: "32kb" }));
-app.get("/api/health", (req, res) =>
-  res.json({ status: "ok", dataSource: "mock" })
-);
-// [게임 목록]
-// 현재: games.json 조회
-// TODO: MySQL에서 게임 목록 조회
-app.get("/api/games", (req, res) => res.json({ games: games.map(enrich) }));
+import { createCatalog } from "./services/catalog.js";
+import {
+  readSnapshot,
+  readReviewPage,
+  reviewPlaytimeGroups,
+  readGameRatings,
+} from "./repositories/storage.js";
+import {
+  hasReviewSearch,
+  searchReviewGames,
+} from "./services/review-search.js";
+import authRouter from "./routes/auth.js";
 
-// [게임 상세정보]
-// 현재: 목데이터에서 id로 게임 조회
-// TODO: MySQL에서 gameId로 단건 조회
-app.get("/api/games/:id", (req, res) => {
-  const g = games.find((g) => g.id === Number(req.params.id));
-  if (!g) return res.status(404).json({ error: "게임을 찾을 수 없습니다." });
-  res.json(enrich(g));
+const app = express();
+const port = Number(process.env.PORT) || 3001;
+
+app.use(express.json({ limit: "32kb" }));
+app.use("/api/auth", authRouter);
+
+const api = express.Router();
+
+api.get("/health", (req, res) => {
+  res.json({ status: "ok", dataSource: "steam-db" });
 });
 
-// [워드클라우드]
-// 현재: 목리뷰의 keywords 집계
-// TODO: 실제 리뷰에서 추출해 저장한 키워드 통계 조회
-// 응답 예시: { keywords: [{ keyword: "협동", reviewCount: 32 }] }
-app.get("/api/games/:id/keywords", (req, res) =>
-  res.json({ keywords: keywords(Number(req.params.id)) })
+api.get("/game-ratings", async (req, res, next) => {
+  const ids = typeof req.query.ids === "string" ? req.query.ids.split(",") : [];
+  if (
+    !ids.length ||
+    ids.length > 2 ||
+    ids.some(
+      (id) => !/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)),
+    )
+  ) {
+    return res
+      .status(400)
+      .json({ error: "게임 ID를 1개 또는 2개 입력해주세요." });
+  }
+
+  try {
+    const gameIds = [...new Set(ids.map(Number))].sort((a, b) => a - b);
+    const ratings = await getCachedCatalog("game-ratings", gameIds, 60, () =>
+      readGameRatings(gameIds),
+    );
+    return res.json({ ratings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.get("/games/:id/reviews", async (req, res) => {
+  const gameId = Number(req.params.id);
+  const {
+    page = "1",
+    sentiment = "all",
+    playtime = "all",
+    keyword = "",
+  } = req.query;
+
+  if (!Number.isSafeInteger(gameId) || gameId < 1) {
+    return res.status(400).json({ error: "유효한 게임 ID가 필요합니다." });
+  }
+
+  if (
+    typeof page !== "string" ||
+    !/^[1-9][0-9]*$/.test(page) ||
+    !Number.isSafeInteger(Number(page))
+  ) {
+    return res
+      .status(400)
+      .json({ error: "페이지는 1 이상의 정수여야 합니다." });
+  }
+
+  if (
+    !["all", "positive", "negative"].includes(sentiment) ||
+    !["all", ...reviewPlaytimeGroups].includes(playtime) ||
+    typeof keyword !== "string" ||
+    keyword.length > 80
+  ) {
+    return res.status(400).json({ error: "리뷰 필터 값이 올바르지 않습니다." });
+  }
+
+  try {
+    const result = await readReviewPage({
+      gameId,
+      requestedPage: Number(page),
+      sentiment,
+      playtime,
+    });
+    if (!result) {
+      return res.status(404).json({ error: "게임을 찾을 수 없습니다." });
+    }
+
+    let similarGames = [];
+    if (keyword)
+      similarGames = await getCachedCatalog(
+        "similar-games",
+        [gameId, sentiment, keyword],
+        60,
+        async () => {
+          const { games, reviews } = await readSnapshot();
+          const counts = new Map();
+
+          for (const review of reviews) {
+            if (review.gameId === gameId || !review.keywords.includes(keyword))
+              continue;
+            if (
+              sentiment !== "all" &&
+              review.recommended !== (sentiment === "positive")
+            )
+              continue;
+            counts.set(review.gameId, (counts.get(review.gameId) ?? 0) + 1);
+          }
+
+          return games
+            .filter((game) => counts.has(game.id))
+            .map(({ id, title }) => ({
+              id,
+              title,
+              reviewCount: counts.get(id),
+            }))
+            .sort((a, b) => b.reviewCount - a.reviewCount || a.id - b.id)
+            .slice(0, 10);
+        },
+      );
+
+    return res.json({ ...result, similarGames });
+  } catch (error) {
+    console.error("리뷰 조회 실패:", error.message);
+    return res.status(503).json({
+      error: "MySQL 또는 MongoDB 연결과 테이블 설정을 확인해주세요.",
+    });
+  }
+});
+
+async function catalogResponse(res, scope, params, ttl, load) {
+  try {
+    const result = await getCachedCatalog(scope, params, ttl, async () =>
+      load(createCatalog(await readSnapshot())),
+    );
+
+    if (result === null) {
+      return res.status(404).json({ error: "게임을 찾을 수 없습니다." });
+    }
+    if (result.invalidGameIds) {
+      return res
+        .status(400)
+        .json({ error: "유효한 gameIds 배열이 필요합니다." });
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("DB 조회 실패:", error.message);
+    return res.status(503).json({
+      error: "MySQL 또는 MongoDB 연결과 테이블 설정을 확인해주세요.",
+    });
+  }
+}
+
+api.get("/games", (req, res) =>
+  catalogResponse(res, "games", [], 60, ({ games, enrich }) => ({
+    games: games.map(enrich),
+  })),
 );
 
-// [게임 리뷰]
-// 현재: reviews.json에서 gameId로 필터링
-// TODO: MongoDB에서 리뷰 조회
-// TODO: 페이지네이션, 긍정/부정 필터 추가
-app.get("/api/games/:id/reviews", (req, res) =>
-  res.json({
-    reviews: reviews.filter((r) => r.gameId === Number(req.params.id)),
-  })
-);
+api.get("/games/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    return res.status(404).json({ error: "게임을 찾을 수 없습니다." });
+  }
+  return catalogResponse(res, "game", [id], 60, ({ games, enrich }) => {
+    const game = games.find((item) => item.id === id);
+    return game ? enrich(game) : null;
+  });
+});
 
-// [자연어 형태 검색]
-// 현재: 키워드 사전으로 검색
-// TODO: 검색 문장 → 조건·키워드 추출
-// TODO: Elasticsearch 리뷰 검색 → 게임별 점수 집계
-app.post("/api/search", (req, res) => {
-  if (typeof req.body.query !== "string" || req.body.query.length > 500)
+api.get("/games/:id/keywords", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.json({ keywords: [] });
+  return catalogResponse(res, "keywords", [id], 60, ({ keywords }) => ({
+    keywords: keywords(id),
+  }));
+});
+
+api.post("/search", async (req, res) => {
+  const query = req.body?.query;
+
+  if (typeof query !== "string" || query.length > 500) {
     return res
       .status(400)
       .json({ error: "검색어는 500자 이내 문자열이어야 합니다." });
-  res.json(search(req.body.query.trim()));
+  }
+
+  const text = query.trim();
+  return catalogResponse(
+    res,
+    "search",
+    [hasReviewSearch(), text],
+    30,
+    async (catalog) => {
+      const existing = catalog.search(text);
+      if (!text || !hasReviewSearch()) return existing;
+
+      try {
+        const hits = await searchReviewGames(text);
+        const gamesById = new Map(catalog.games.map((game) => [game.id, game]));
+        const matches = new Map(existing.games.map((game) => [game.id, game]));
+        const games = [];
+
+        for (const { id, score } of hits) {
+          const game = gamesById.get(id);
+          if (!game) continue;
+          games.push({
+            ...(matches.get(id) ?? catalog.enrich(game)),
+            score,
+          });
+          matches.delete(id);
+        }
+
+        return {
+          ...existing,
+          games: [...games, ...matches.values()],
+          mode: "elasticsearch",
+        };
+      } catch (error) {
+        console.error("Elasticsearch 검색 실패:", error.message);
+        return { ...existing, mode: "steam-keyword-fallback" };
+      }
+    },
+  );
 });
 
-// [취향 기반 추천]
-// 현재: 목데이터의 긍정 리뷰 키워드 유사도 계산
-// TODO: DB에 저장한 게임별 긍정 리뷰 특징으로 추천
-// TODO: 선택한 게임은 추천 결과에서 제외
-app.post("/api/recommendations", (req, res) => {
-  const ids = req.body.gameIds;
+api.post("/recommendations", (req, res) => {
+  const ids = req.body?.gameIds;
   if (
     !Array.isArray(ids) ||
     !ids.length ||
-    !ids.every((id) => games.some((g) => g.id === id))
-  )
+    !ids.every((id) => Number.isSafeInteger(id) && id > 0)
+  ) {
     return res.status(400).json({ error: "유효한 gameIds 배열이 필요합니다." });
-  res.json({ games: recommend([...new Set(ids)]) });
+  }
+
+  const uniqueIds = [...new Set(ids)];
+  return catalogResponse(
+    res,
+    "recommendations",
+    uniqueIds,
+    60,
+    ({ games, recommend }) => {
+      if (!uniqueIds.every((id) => games.some((game) => game.id === id))) {
+        return { invalidGameIds: true };
+      }
+      return { games: recommend(uniqueIds) };
+    },
+  );
 });
 
+app.use("/api", api);
 
-app.use("/api", (req, res) =>
-  res.status(404).json({ error: "존재하지 않는 API입니다." })
-);
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "존재하지 않는 API입니다." });
+});
+
 const dist = fileURLToPath(new URL("../../frontend/dist/", import.meta.url));
 app.use(express.static(dist));
 app.get("/", (req, res) => res.sendFile(dist + "index.html"));
-app.use((err, req, res, next) => {
-  console.error(err.message);
-  res.status(err.status || 500).json({
+
+app.use((error, req, res, next) => {
+  console.error(error.message);
+
+  const status = error.status || 500;
+  res.status(status).json({
     error:
-      err.status === 400
-        ? "잘못된 JSON 요청입니다."
-        : "서버 오류가 발생했습니다.",
+      status === 400 ? "잘못된 JSON 요청입니다." : "서버 오류가 발생했습니다.",
   });
 });
-app.listen(Number(process.env.PORT) || 3001, "0.0.0.0", () =>
-  console.log("API ready: http://localhost:" + (process.env.PORT || 3001))
-);
+
+app.listen(port, "0.0.0.0", () => {
+  console.log(`API ready: http://localhost:${port}`);
+});

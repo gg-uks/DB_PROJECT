@@ -1,3 +1,15 @@
+import {
+  Bar,
+  Brush,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import AuthModal from "./components/AuthModal.jsx";
@@ -6,7 +18,7 @@ import "./style.css";
 /**
  * [프론트 → 백엔드 API]
  *
- * GET  /api/games
+ * GET  /api/gamesx
  *      게임 목록 조회
  *
  * GET  /api/games/:id
@@ -47,10 +59,539 @@ async function api(path, body, signal) {
   if (!r.ok) throw Error(d.error || "요청에 실패했습니다.");
   return d;
 }
+function GameImage({ game }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!game.image || failed) {
+    return (
+      <div
+        className="muted"
+        style={{
+          aspectRatio: "460 / 215",
+          display: "grid",
+          placeItems: "center",
+          background: "#142638",
+        }}
+      >
+        게임 이미지 없음
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={game.image}
+      alt={game.title}
+      onError={() => setFailed(true)}
+      style={{ width: "100%", display: "block", objectFit: "cover" }}
+    />
+  );
+}
+
+const reviewTimeLabels = {
+  all: "전체 시간",
+  "under-2h": "2시간 미만",
+  "2-to-10h": "2시간 이상 ~ 10시간 미만",
+  "10h-plus": "10시간 이상",
+  unknown: "시간 정보 없음",
+};
+
+function WeeklyRatingsChart({ games, ratings }) {
+  const series = games.filter(Boolean).map((game) => ({
+    ...game,
+    weekly: ratings.find((rating) => rating.id === game.id)?.weekly ?? [],
+  }));
+  const weeks = [
+    ...new Set(series.flatMap((game) => game.weekly.map(({ week }) => week))),
+  ].sort();
+  if (!weeks.length) return <p>주별 평가 데이터가 없습니다.</p>;
+
+  const data = weeks.map((week) => {
+    const point = { week };
+    for (const game of series) {
+      const rating = game.weekly.find((entry) => entry.week === week);
+      point[`rate-${game.id}`] = rating?.total
+        ? (100 * rating.positive) / rating.total
+        : null;
+      point[`negative-rate-${game.id}`] = rating?.total
+        ? (100 * rating.negative) / rating.total
+        : null;
+      point[`volume-${game.id}`] = rating?.total ?? 0;
+      point[`rating-${game.id}`] = rating;
+    }
+    return point;
+  });
+  const colors = ["#67c1f5", "#f0a36b"];
+
+  return (
+    <section
+      aria-label="주별 게임 평가 추이"
+      style={{ minWidth: 0, marginTop: 24 }}
+    >
+      <h3>주별 추천·비추천 비율과 리뷰 수</h3>
+      <p className="muted">수집 리뷰 기준 · 작성일 기준 월요일 시작</p>
+      <ResponsiveContainer width="100%" height={380}>
+        <ComposedChart data={data}>
+          <CartesianGrid stroke="#29455b" vertical={false} />
+          <XAxis
+            dataKey="week"
+            tick={{ fill: "#c5d9e8", fontSize: 12 }}
+            minTickGap={24}
+          />
+          <YAxis
+            yAxisId="rate"
+            domain={[0, 100]}
+            unit="%"
+            tick={{ fill: "#c5d9e8" }}
+          />
+          <YAxis
+            yAxisId="volume"
+            orientation="right"
+            allowDecimals={false}
+            tick={{ fill: "#c5d9e8" }}
+          />
+          <Legend />
+          <Tooltip
+            content={({ active, payload, label }) => {
+              const point = payload?.[0]?.payload;
+              if (!active || !point) return null;
+              return (
+                <div
+                  style={{
+                    background: "#122535",
+                    color: "#edf7ff",
+                    padding: 12,
+                  }}
+                >
+                  <strong>{label} 주간</strong>
+                  {series.map((game) => {
+                    const rating = point[`rating-${game.id}`];
+                    return (
+                      <div key={game.id}>
+                        {game.title}
+                        {rating
+                          ? ` · 추천 ${rating.positive}건 (${((100 * rating.positive) / rating.total).toFixed(1)}%) · 비추천 ${rating.negative}건 (${((100 * rating.negative) / rating.total).toFixed(1)}%)`
+                          : " · 수집 리뷰 없음"}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }}
+          />
+          {series.map((game, index) => (
+            <Bar
+              key={game.id}
+              yAxisId="volume"
+              dataKey={`volume-${game.id}`}
+              name={game.title + " 리뷰 수"}
+              fill={colors[index]}
+              fillOpacity={0.35}
+            />
+          ))}
+          {series.map((game, index) => (
+            <Line
+              key={game.id}
+              yAxisId="rate"
+              dataKey={`rate-${game.id}`}
+              name={game.title + " 추천율"}
+              stroke={colors[index]}
+              strokeWidth={2}
+            />
+          ))}
+          {series.map((game, index) => (
+            <Line
+              key={`negative-${game.id}`}
+              yAxisId="rate"
+              dataKey={`negative-rate-${game.id}`}
+              name={game.title + " 비추천율"}
+              stroke={colors[index]}
+              strokeWidth={2}
+              strokeDasharray="5 4"
+            />
+          ))}
+          {weeks.length > 1 && (
+            <Brush dataKey="week" height={26} stroke="#67c1f5" fill="#192c3c" />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </section>
+  );
+}
+
+function GameRatingBar({ rating }) {
+  if (!rating.total) return <p>수집된 리뷰 없음</p>;
+
+  const percent = (count) => (count * 100) / rating.total;
+  return (
+    <div className="game-rating">
+      <div className="game-rating-bar" aria-hidden="true">
+        <span style={{ width: `${percent(rating.positive)}%` }} />
+        <span style={{ width: `${percent(rating.negative)}%` }} />
+      </div>
+      <p>
+        추천 {rating.positive}건 ({percent(rating.positive).toFixed(1)}%)
+        {" · "}비추천 {rating.negative}건 ({percent(rating.negative).toFixed(1)}
+        %)
+      </p>
+      <small className="muted">수집 리뷰 {rating.total}건 기준</small>
+    </div>
+  );
+}
+
+function GameComparison({ games }) {
+  const [selection, setSelection] = useState(["", ""]);
+  const [ratingResult, setRatingResult] = useState(null);
+  const ids = selection.filter(Boolean).join(",");
+
+  useEffect(() => {
+    if (!ids) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ ids });
+
+    api(`/game-ratings?${params}`, undefined, controller.signal)
+      .then(({ ratings }) => {
+        if (!controller.signal.aborted) setRatingResult({ ids, ratings });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRatingResult({ ids, error: true });
+      });
+
+    return () => controller.abort();
+  }, [ids]);
+
+  const currentRatings = ratingResult?.ids === ids ? ratingResult : null;
+  const candidates = games.filter((game) => game.reviewCount > 0);
+  const chosen = selection.map((id) =>
+    candidates.find((game) => String(game.id) === id),
+  );
+
+  return (
+    <section id="compare" aria-labelledby="compare-title">
+      <div className="sectionhead">
+        <h2 id="compare-title">게임 비교</h2>
+      </div>
+      <p className="muted">
+        게임 두 개를 선택하세요. 글자가 클수록 그 게임의 수집 리뷰에서 해당
+        키워드를 언급한 비율이 높아요. 숫자는 언급한 리뷰 수예요.
+      </p>
+      {candidates.length < 2 && (
+        <p>비교하려면 리뷰가 수집된 게임이 두 개 이상 필요해요.</p>
+      )}
+      <div className="game-comparison-grid">
+        {chosen.map((game, index) => {
+          const rating = currentRatings?.ratings?.find(
+            (item) => item.id === game?.id,
+          );
+          return (
+            <article className="game-comparison-card" key={index}>
+              <label>
+                {index === 0 ? "첫 번째 게임" : "두 번째 게임"}
+                <select
+                  value={selection[index]}
+                  onChange={(event) => {
+                    const id = event.target.value;
+                    setSelection((current) =>
+                      current.map((value, position) =>
+                        position === index ? id : value,
+                      ),
+                    );
+                  }}
+                >
+                  <option value="">게임 선택</option>
+                  {candidates.map(({ id, title }) => (
+                    <option
+                      key={id}
+                      value={id}
+                      disabled={String(id) === selection[1 - index]}
+                    >
+                      {title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {game && (
+                <>
+                  <h3>{game.title}</h3>
+                  {rating && <GameRatingBar rating={rating} />}
+                  {currentRatings?.error && (
+                    <p role="alert">평가 집계를 불러오지 못했어요.</p>
+                  )}
+                  {!currentRatings && (
+                    <p role="status">평가 집계를 불러오는 중…</p>
+                  )}
+                  {currentRatings?.ratings && !rating && (
+                    <p>게임 평가 집계가 없습니다.</p>
+                  )}
+                  <p className="muted">키워드 분석 표본 {game.reviewCount}건</p>
+                  {game.keywords?.length ? (
+                    <ul
+                      className="game-comparison-cloud"
+                      aria-label={game.title + " 리뷰 키워드"}
+                    >
+                      {game.keywords.map(({ keyword, reviewCount }) => {
+                        const share = reviewCount / game.reviewCount;
+                        return (
+                          <li
+                            key={keyword}
+                            style={{ fontSize: `${1 + share * 2}rem` }}
+                          >
+                            {keyword}{" "}
+                            <small>
+                              {reviewCount}건 · {(share * 100).toFixed(1)}%
+                            </small>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p>수집 리뷰에서 사전에 등록된 키워드를 찾지 못했어요.</p>
+                  )}
+                </>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {currentRatings?.ratings && (
+        <WeeklyRatingsChart
+          key={ids}
+          games={chosen}
+          ratings={currentRatings.ratings}
+        />
+      )}
+    </section>
+  );
+}
+
+function ReviewList({ gameId, keywords, onOpenGame }) {
+  const [sentiment, setSentiment] = useState("all");
+  const [playtime, setPlaytime] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const params = new URLSearchParams({ page, sentiment, playtime, keyword });
+    api(`/games/${gameId}/reviews?${params}`, undefined, controller.signal)
+      .then((result) => {
+        if (
+          !Array.isArray(result.reviews) ||
+          !Number.isInteger(result.totalPages)
+        ) {
+          throw new Error("백엔드의 리뷰 페이지네이션 응답을 확인해주세요.");
+        }
+        if (!controller.signal.aborted) setData(result);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(error.message);
+      });
+
+    return () => controller.abort();
+  }, [gameId, page, sentiment, playtime, keyword]);
+
+  function goToPage(nextPage) {
+    setError("");
+    setData(null);
+    setPage(nextPage);
+  }
+
+  return (
+    <section aria-label="Steam 리뷰">
+      <h3>Steam 리뷰</h3>
+      <div className="review-filters">
+        <label>
+          평가
+          <select
+            value={sentiment}
+            onChange={(e) => {
+              setSentiment(e.target.value);
+              goToPage(1);
+            }}
+          >
+            <option value="all">전체 평가</option>
+            <option value="positive">추천</option>
+            <option value="negative">비추천</option>
+          </select>
+        </label>
+        <label>
+          리뷰 작성 당시 플레이 시간
+          <select
+            value={playtime}
+            onChange={(e) => {
+              setPlaytime(e.target.value);
+              goToPage(1);
+            }}
+          >
+            {Object.entries(reviewTimeLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          같은 키워드를 언급한 게임
+          <select
+            value={keyword}
+            onChange={(e) => {
+              setKeyword(e.target.value);
+              goToPage(1);
+            }}
+          >
+            <option value="">키워드 선택</option>
+            {keywords.map(({ keyword }) => (
+              <option key={keyword}>{keyword}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {data?.comparison && (
+        <table className="review-comparison">
+          <caption>전체 수집 리뷰의 플레이 시간별 평가</caption>
+          <thead>
+            <tr>
+              <th>플레이 시간</th>
+              <th>추천</th>
+              <th>비추천</th>
+              <th>추천 비율</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.comparison.map(({ group, positive, negative }) => (
+              <tr key={group}>
+                <th scope="row">{reviewTimeLabels[group]}</th>
+                <td>{positive}</td>
+                <td>{negative}</td>
+                <td>
+                  {positive + negative
+                    ? Math.round((100 * positive) / (positive + negative)) + "%"
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {keyword && data?.similarGames && (
+        <section>
+          <h4>
+            ‘{keyword}’을 언급한 다른 게임 ·{" "}
+            {sentiment === "all"
+              ? "전체 평가"
+              : sentiment === "positive"
+                ? "추천 리뷰"
+                : "비추천 리뷰"}
+          </h4>
+          {data.similarGames.length === 0 && (
+            <p>같은 키워드를 언급한 게임이 없습니다.</p>
+          )}
+          <ul>
+            {data.similarGames.map(({ id, title, reviewCount }) => (
+              <li key={id}>
+                <button
+                  className="review-link"
+                  type="button"
+                  onClick={() => onOpenGame(id)}
+                >
+                  {title} · {reviewCount}건
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {error && <p role="alert">{error}</p>}
+      {!error && !data && <p role="status">리뷰를 불러오는 중…</p>}
+
+      {data?.total === 0 && <p>조건에 맞는 리뷰가 없습니다.</p>}
+      {data?.total > 0 && <p>조건에 맞는 리뷰 {data.total}건</p>}
+
+      {data?.reviews.map((review) => (
+        <article key={review.id} className="steam-review-card">
+          <strong
+            className={`steam-review-badge ${review.recommended ? "is-positive" : "is-negative"}`}
+          >
+            {review.recommended ? "추천" : "비추천"}
+          </strong>
+          {review.playtimeAtReviewMinutes != null && (
+            <small>
+              {" "}
+              · 리뷰 작성 당시 {Math.floor(review.playtimeAtReviewMinutes / 60)}
+              시간 {review.playtimeAtReviewMinutes % 60}분 플레이
+            </small>
+          )}
+          <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            {review.text?.trim() ? review.text : "리뷰 본문이 없습니다."}
+          </p>
+        </article>
+      ))}
+
+      {data?.totalPages > 1 && (
+        <nav className="steam-review-pagination" aria-label="리뷰 페이지">
+          <button
+            type="button"
+            disabled={data.page <= 1}
+            onClick={() => goToPage(data.page - 1)}
+          >
+            이전
+          </button>
+          <span>
+            {" "}
+            {data.page} / {data.totalPages}{" "}
+          </span>
+          <button
+            type="button"
+            disabled={data.page >= data.totalPages}
+            onClick={() => goToPage(data.page + 1)}
+          >
+            다음
+          </button>
+        </nav>
+      )}
+    </section>
+  );
+}
+
+const PAGE_SIZE = 24;
+const FEATURED_LIMIT = 8;
+
 function App() {
   // null: 닫힘 / login: 로그인 / signup: 회원가입
   const [authMode, setAuthMode] = useState(null);
   const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function restoreLogin() {
+      const response = await fetch("/api/auth/me", {
+        credentials: "include",
+        signal: controller.signal,
+      });
+
+      if (response.status === 401) return;
+      if (!response.ok) throw new Error(`회원 조회 실패 (${response.status})`);
+
+      const { user } = await response.json();
+      if (!controller.signal.aborted && user) {
+        setUser((currentUser) => currentUser ?? user);
+      }
+    }
+
+    restoreLogin().catch((error) => {
+      if (!controller.signal.aborted) console.error(error);
+    });
+
+    return () => controller.abort();
+  }, []);
+
   const [games, setGames] = useState([]),
     [results, setResults] = useState(null),
     [query, setQuery] = useState(""),
@@ -61,6 +602,8 @@ function App() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [tab, setTab] = useState("전체");
+
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api("/games")
@@ -81,7 +624,13 @@ function App() {
     setBusy(true);
     setError("");
     try {
-      setResults((await api("/search", { query: value })).games);
+      const { games: matches } = await api("/search", { query: value });
+      setResults(matches);
+      setTab("전체");
+      setPage(1);
+      document
+        .getElementById("game-catalog")
+        ?.scrollIntoView({ behavior: "smooth" });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -94,7 +643,7 @@ function App() {
     setError("");
     try {
       setRecommendations(
-        (await api("/recommendations", { gameIds: [Number(seed)] })).games
+        (await api("/recommendations", { gameIds: [Number(seed)] })).games,
       );
     } catch (e) {
       setError(e.message);
@@ -102,20 +651,35 @@ function App() {
       setBusy(false);
     }
   }
-  const hero = games[active],
-    list = (results ?? games).filter(
-      (g) => tab === "전체" || g.tags.includes(tab)
-    );
+  const featuredGames = games
+    .filter((game) => game.image)
+    .slice(0, FEATURED_LIMIT);
+  const featured = featuredGames.length
+    ? featuredGames
+    : games.slice(0, FEATURED_LIMIT);
+  const hero = featured[active];
+  const list = (results ?? games).filter(
+    (game) =>
+      tab === "전체" ||
+      game.keywords?.some(({ keyword }) => keyword === tab) ||
+      game.tags?.includes(tab),
+  );
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const firstIndex = (currentPage - 1) * PAGE_SIZE;
+  const pageGames = list.slice(firstIndex, firstIndex + PAGE_SIZE);
+
+  function goToPage(nextPage) {
+    setPage(nextPage);
+    document
+      .getElementById("game-catalog")
+      ?.scrollIntoView({ behavior: "smooth" });
+  }
+
   function Card({ g }) {
     return (
       <button className="card" onClick={() => setSelected(g)}>
-        <img
-          src={g.image}
-          alt={g.title}
-          onError={(e) => {
-            e.target.style.visibility = "hidden";
-          }}
-        />
+        <GameImage key={g.image} game={g} />
         <div className="cardbody">
           <h3>{g.title}</h3>
           <p className="cyan">
@@ -130,7 +694,9 @@ function App() {
             ))}
           </div>
           <div className="price">
-            ₩ {g.price.toLocaleString()} <small>예시 가격</small>
+            {g.priceAvailable === false
+              ? "가격 정보 없음"
+              : `₩ ${g.price.toLocaleString()}`}
           </div>
         </div>
       </button>
@@ -150,6 +716,7 @@ function App() {
             </a>
             <a href="#taste">취향 추천</a>
             <a href="#keywords">리뷰 인사이트</a>
+            <a href="#compare">게임 비교</a>
           </nav>
 
           <div className="auth-actions">
@@ -206,7 +773,7 @@ function App() {
                 <button key={t} disabled={busy} onClick={() => search(null, t)}>
                   {t} ↗
                 </button>
-              )
+              ),
             )}
           </div>
         </section>
@@ -252,19 +819,24 @@ function App() {
                     ))}
                   </div>
                   <blockquote>
-                    “{hero.description}”<small>목데이터 게임 소개</small>
+                    {hero.description || "게임 소개 정보 없음"}
+                    <small>Steam 게임 소개</small>
                   </blockquote>
                   <button className="primary" onClick={() => setSelected(hero)}>
                     리뷰 키워드 살펴보기 →
                   </button>
                   <div className="herobottom">
                     <span>리뷰 기반 게임 탐색</span>
-                    <b>₩ {hero.price.toLocaleString()}</b>
+                    <b>
+                      {hero.priceAvailable === false
+                        ? "가격 정보 없음"
+                        : `₩ ${hero.price.toLocaleString()}`}
+                    </b>
                   </div>
                 </div>
               </div>
               <div className="dots">
-                {games.map((g, i) => (
+                {featured.map((g, i) => (
                   <button
                     aria-label={`${g.title} 배너 보기`}
                     aria-pressed={i === active}
@@ -279,7 +851,7 @@ function App() {
             <div className="loading">게임 목록을 불러오는 중…</div>
           )}
         </section>
-        <section className="catalog">
+        <section id="game-catalog" className="catalog">
           <div className="sectionhead">
             <h2>
               {results ? "검색 결과" : "리뷰로 발견하는 게임"}{" "}
@@ -292,6 +864,7 @@ function App() {
                   setResults(null);
                   setQuery("");
                   setTab("전체");
+                  setPage(1);
                 }}
               >
                 전체 게임 보기
@@ -304,16 +877,21 @@ function App() {
                 <button
                   key={t}
                   className={tab === t ? "active" : ""}
-                  onClick={() => setTab(t)}
+                  onClick={() => {
+                    setResults(null);
+                    setQuery("");
+                    setTab(t);
+                    setPage(1);
+                  }}
                 >
                   {t}
                 </button>
-              )
+              ),
             )}
           </div>
           {list.length ? (
             <div className="grid">
-              {list.map((g) => (
+              {pageGames.map((g) => (
                 <Card g={g} key={g.id} />
               ))}
             </div>
@@ -321,6 +899,38 @@ function App() {
             <p className="empty">
               일치하는 게임이 없어요. 다른 키워드로 검색해 보세요.
             </p>
+          )}
+          {totalPages > 1 && (
+            <nav
+              aria-label="게임 목록 페이지 이동"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 12,
+                marginTop: 20,
+              }}
+            >
+              <button
+                type="button"
+                className="outline"
+                disabled={currentPage === 1}
+                onClick={() => goToPage(currentPage - 1)}
+              >
+                이전
+              </button>
+              <span aria-live="polite">
+                {currentPage} / {totalPages} 페이지
+              </span>
+              <button
+                type="button"
+                className="outline"
+                disabled={currentPage === totalPages}
+                onClick={() => goToPage(currentPage + 1)}
+              >
+                다음
+              </button>
+            </nav>
           )}
         </section>
         <section id="taste" className="taste">
@@ -370,6 +980,7 @@ function App() {
             )}
           </section>
         )}
+        <GameComparison games={games} />
         <section id="keywords">
           <div className="sectionhead">
             <h2>어떤 플레이를 좋아하세요?</h2>
@@ -385,12 +996,7 @@ function App() {
               <button
                 key={t}
                 className={"theme t" + i}
-                onClick={() => {
-                  search(null, t);
-                  document
-                    .querySelector(".catalog")
-                    .scrollIntoView({ behavior: "smooth" });
-                }}
+                onClick={() => search(null, t)}
               >
                 <small>{s}</small>
                 <strong>{t} ↗</strong>
@@ -405,8 +1011,8 @@ function App() {
             학습용 독립 프로젝트 · Steam과 무관합니다. 게임 이미지의 권리는 각
             권리자에게 있습니다.
             <br />
-            리뷰·분석·가격은 시연용 목데이터입니다. 검색은 한국어 키워드 사전
-            방식입니다.
+            리뷰와 분석은 수집한 Steam 리뷰 표본을 기준으로 합니다. 검색은
+            한국어 키워드 사전 방식입니다.
           </small>
         </footer>
       </main>
@@ -427,9 +1033,9 @@ function App() {
             >
               ✕
             </button>
-            <img src={selected.image} alt="" />
+            <GameImage key={selected.image} game={selected} />
             <div className="modalbody">
-              <p className="eyebrow">REVIEW INSIGHTS · MOCK DATA</p>
+              <p className="eyebrow">REVIEW INSIGHTS · STEAM</p>
               <h2 id="detail-title">{selected.title}</h2>
               <p>{selected.description}</p>
               <h3>리뷰 속 자주 등장하는 키워드</h3>
@@ -456,9 +1062,17 @@ function App() {
               </div>
               <p className="muted">
                 전체 리뷰 {selected.reviewCount}건 · 긍정{" "}
-                {selected.positiveRate}% · 상세페이지는 다음 단계에서 확장할 수
-                있습니다.
+                {selected.positiveRate}%
               </p>
+              <ReviewList
+                key={selected.id}
+                gameId={selected.id}
+                keywords={selected.keywords ?? []}
+                onOpenGame={(id) => {
+                  const game = games.find((item) => item.id === id);
+                  if (game) setSelected(game);
+                }}
+              />
             </div>
           </article>
         </div>

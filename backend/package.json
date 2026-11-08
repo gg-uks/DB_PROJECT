@@ -8,6 +8,10 @@
     "start": "node --env-file-if-exists=.env src/server.js"
   },
   "dependencies": {
-    "express": "^5.0.0"
+    "express": "^5.0.0",
+    "kafkajs": "^2.2.4",
+    "mongodb": "^7.8.0",
+    "mysql2": "^3.24.6",
+    "redis": "^6.3.1"
   }
 }
