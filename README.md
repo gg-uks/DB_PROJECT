@@ -1,101 +1,119 @@
-<<<<<<< HEAD
-# PLAYLOG — 게임 리뷰 검색·추천 개발 시작점
+# PLAYLOG | Steam 리뷰 기반 게임 검색·추천
 
-Steam의 어두운 색상, 2단 메뉴, 대형 추천 배너를 참고한 독립 학습용 프로젝트입니다.
-React + Vite 프론트엔드와 Node.js + Express 백엔드를 포함합니다. DB, Redis, Kafka, Elasticsearch는 아직 필요 없습니다.
+PLAYLOG는 Steam 리뷰에서 실제 플레이 경험을 찾아 게임을 검색하고 비교하는 웹 서비스입니다. 게임 제목뿐 아니라 리뷰 본문으로 게임을 찾을 수 있으며, 게임별 키워드와 추천·비추천 추이를 비교할 수 있습니다.
 
-## 1. 개발 환경
+## 주요 기능
 
-Node.js 24 LTS와 npm을 설치하세요. Windows에서는 VS Code 터미널(PowerShell 또는 CMD)에서 실행할 수 있습니다.
-압축 해제 후 package.json이 있는 game-review 폴더를 엽니다.
+| 기능 | 설명 |
+|---|---|
+| 게임 탐색 | Steam API로 수집한 게임 목록을 조회하고 제목과 리뷰 키워드로 탐색 |
+| 리뷰 본문 검색 | Elasticsearch로 리뷰 본문을 검색하고, 일치하는 리뷰를 게임별로 묶어 표시 |
+| 게임 상세 | 리뷰를 추천 여부와 작성 당시 플레이 시간으로 필터링하고 10건씩 조회 |
+| 리뷰 워드클라우드 | 리뷰 본문에서 추출한 키워드의 언급 건수를 시각화 |
+| 게임 비교 | 두 게임의 키워드 언급 비율, 추천·비추천 비율, 리뷰 건수를 비교 |
+| 취향 추천 | 사용자가 선택한 게임의 긍정 리뷰에서 자주 등장하는 키워드로 유사 게임 추천 |
+| 회원 기능 | 회원가입, 로그인, 세션 쿠키를 이용한 새로고침 후 로그인 상태 복원 |
 
-```sh
-cd game-review
+## 기술 스택과 데이터 역할
+
+| 기술 | 역할 |
+|---|---|
+| React · Vite · Recharts | 게임 탐색, 리뷰 상세, 워드클라우드 및 비교 차트 |
+| Node.js · Express | REST API, 회원 인증, 리뷰 키워드 분석 및 데이터 연결 |
+| MySQL | 게임 정보, 리뷰 메타데이터, 회원 및 세션 저장. 리뷰 필터·페이지네이션과 평가 통계 집계 |
+| MongoDB | 리뷰 원문과 정제 본문 보관 |
+| Elasticsearch | 리뷰 본문과 키워드를 검색용 문서로 색인 |
+| Kafka | Steam 리뷰를 수집하는 Producer와 저장·색인하는 Consumer 사이에서 메시지 전달 |
+| Redis | 게임 목록·상세, 키워드, 비교 통계, 검색, 추천 결과를 두 웹서버가 공유할 수 있도록 캐시 |
+
+## 리뷰 수집과 검색 흐름
+
+```mermaid
+flowchart LR
+    Steam["Steam API"] --> Producer["리뷰 Producer"]
+    Producer --> Kafka["Kafka · steam.reviews"]
+    Kafka --> Consumer["리뷰 Consumer"]
+    Consumer --> Mongo["MongoDB · 리뷰 본문"]
+    Consumer --> MySQL["MySQL · 리뷰 메타데이터"]
+    Consumer --> ES["Elasticsearch · 리뷰 검색 인덱스"]
+```
+
+Consumer는 두 DB에 리뷰를 저장하고, 본문이 있는 리뷰는 Elasticsearch에 색인한 뒤 Kafka 오프셋을 커밋합니다. 같은 리뷰 ID가 다시 수집되면 기존 저장 데이터와 검색 문서를 갱신합니다.
+
+상세 화면에서는 MySQL이 조건에 맞는 리뷰 ID를 페이지당 최대 10개 조회하고, MongoDB가 해당 리뷰의 본문을 제공합니다. 워드클라우드 키워드는 Node.js가 리뷰 본문에 사전 표현이 포함되어 있는지 확인해 추출합니다. 한 리뷰에서 같은 키워드를 여러 번 언급해도 한 건으로 집계합니다.
+
+## 로컬 검증 결과
+
+| 항목 | 확인 결과 |
+|---|---|
+| 게임 데이터 | MySQL 게임 1,001개 |
+| 리뷰 데이터 | 5개 게임의 리뷰 메타데이터 1,000건 저장 |
+| 검색 인덱스 | `playlog-reviews-v1` 문서 994건 확인 |
+| 검색 테스트 | `hacker`로 리뷰 본문을 검색해 관련 게임 조회 |
+| Kafka 수집 | 서로 다른 리뷰 1,000건 발행 확인 |
+| 세션 | 로그인 후 페이지를 새로고침해도 로그인 상태 복원 |
+
+리뷰 통계와 추천은 프로젝트에서 수집한 리뷰 표본을 기준으로 합니다. 색인 스크립트는 검색할 본문이 비어 있는 리뷰를 건너뜁니다.
+
+## 주요 API
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/health` | 웹 프로세스 응답 확인 |
+| `GET` | `/api/games` | 게임 목록 조회 |
+| `GET` | `/api/games/:id` | 게임 상세 조회 |
+| `GET` | `/api/games/:id/reviews` | 리뷰 필터 및 페이지네이션 |
+| `GET` | `/api/games/:id/keywords` | 워드클라우드 키워드 조회 |
+| `GET` | `/api/game-ratings?ids=730,413150` | 선택한 게임의 평가 건수와 기간별 집계 |
+| `POST` | `/api/search` | 게임 제목·키워드·리뷰 본문 검색 |
+| `POST` | `/api/recommendations` | 선택한 게임을 기준으로 유사 게임 추천 |
+| `POST` | `/api/auth/signup` | 회원가입 |
+| `POST` | `/api/auth/login` | 로그인 및 세션 발급 |
+| `GET` | `/api/auth/me` | 현재 로그인한 회원 조회 |
+
+## 로컬 실행
+
+프로젝트 루트에서 의존성을 설치합니다.
+
+```bash
 npm ci
+```
+
+`backend/.env.example`을 참고해 `backend/.env`를 만들고 MySQL, MongoDB, Kafka 및 Elasticsearch 접속 정보를 설정합니다. Redis를 사용할 때는 `REDIS_URL`을 설정합니다. 실제 API 키와 비밀번호는 각 실행 환경에서 관리합니다.
+
+Elasticsearch가 자체 CA로 HTTPS를 제공하는 경우, Node.js를 실행하는 셸이나 서비스 환경에 `NODE_EXTRA_CA_CERTS`로 CA 인증서 경로를 지정합니다.
+
+```bash
+# 기존 리뷰를 Elasticsearch에 최초 색인
+node --env-file=backend/.env backend/scripts/index-reviews.mjs
+
+# 프론트엔드와 백엔드 실행
 npm run dev
 ```
 
-- 화면: http://localhost:5173
-- API 상태: http://localhost:3001/api/health
-- 종료: Ctrl+C
-- 루트에서 한 번 설치하면 frontend/backend가 npm workspaces로 함께 설치됩니다.
-- 기본 포트: 프론트 5173, 백엔드 3001. 다른 프로그램이 사용 중이면 종료하거나 설정을 함께 수정하세요.
-- 개발 프록시: frontend/vite.config.js에서 /api를 3001로 전달합니다.
-- backend/.env.example을 backend/.env로 복사하면 PORT를 설정할 수 있습니다. 변경하면 프론트 프록시 포트도 맞추세요.
+Kafka 리뷰 수집을 확인하려면 별도 터미널에서 Consumer를 시작한 뒤 Producer를 실행합니다.
 
-## 2. 현재 화면과 동작
+```bash
+# 터미널 1
+node --env-file=backend/.env backend/scripts/steam-reviews.mjs consume
 
-- 네이비 배경, 상단 메뉴, 자연어 형태 입력창
-- 추천 배너와 수동 슬라이드 전환
-- 게임 카드 8개, 태그 필터, 검색 결과 및 빈 결과
-- 게임 카드 클릭 시 상세 모달과 키워드 크기 미리보기
-- 재밌게 한 게임 선택 → 긍정 리뷰의 키워드 벡터 코사인 유사도로 다른 게임 추천
-- 모바일 대응, API 오류 표시
-
-모든 리뷰와 가격은 목데이터입니다. 게임 제목과 외부 Steam 이미지 URL은 시각적 시연에 사용합니다.
-외부 이미지 로딩에는 인터넷 연결이 필요합니다. 이미지가 차단돼도 제목·태그·API는 동작합니다.
-공식 Steam 로그인·결제·스토어 연동은 없습니다.
-
-## 3. 검색·분석 범위
-
-검색은 한국어 동의어 사전과 목리뷰 키워드 집계 방식이며 LLM/의미 검색이 아닙니다.
-예: 친구와 함께, 혼자 즐기는 스토리, 힐링 농장 게임.
-검색 문장의 부정 표현(예: 어렵지 않은 게임)은 아직 해석하지 않습니다.
-리뷰 키워드는 시연을 위해 수동 라벨링했으며 본문에서 자동 추출하지 않습니다.
-워드클라우드는 빈도에 따른 크기 표시의 초기 형태로 실제 단어 충돌 배치 엔진은 사용하지 않습니다.
-각 게임에 샘플 리뷰 12건(긍정 9건/부정 3건)이 있습니다. 통계는 실제 Steam 평가가 아닙니다.
-
-## 4. 폴더
-
-```text
-frontend/src/main.jsx             화면과 API 호출
-frontend/src/style.css            스타일·반응형
-frontend/vite.config.js           개발 프록시
-backend/src/server.js             HTTP 라우트
-backend/src/services/catalog.js   데이터 조회·키워드 집계·추천
-backend/src/mocks/games.json      정형 목게임 8건
-backend/src/mocks/reviews.json    목리뷰 96건
+# 터미널 2
+node --env-file=backend/.env backend/scripts/steam-reviews.mjs produce
 ```
 
-## 5. API
+## VM 배포 계획
 
-| Method | 경로 | 요청 |
-|---|---|---|
-| GET | /api/health | 없음 |
-| GET | /api/games | 없음 |
-| GET | /api/games/:id | 없음 |
-| GET | /api/games/:id/reviews | 없음 |
-| GET | /api/games/:id/keywords | 없음 |
-| POST | /api/search | {"query":"친구와 함께"} |
-| POST | /api/recommendations | {"gameIds":[413150]} |
+총 11대의 VM을 사용합니다. Web1과 Web2에 같은 버전의 PLAYLOG를 배포하고, HAProxy가 두 웹서버로 요청을 분산합니다.
 
-게임 id는 Steam 앱 ID를 사용하며 리뷰의 gameId와 연결됩니다.
-POST는 Content-Type: application/json으로 전송합니다.
+| 구성 | 대수 | 역할 |
+|---|---:|---|
+| NAT | 1 | 외부 웹 요청을 내부 HAProxy로 전달 |
+| HAProxy | 1 | Web1·Web2 로드밸런싱 및 `/api/health` 확인 |
+| Web1·Web2 | 2 | React 화면 및 Node.js API 실행 |
+| MySQL | 2 | Primary와 Replica 구성 |
+| MongoDB | 2 | 리뷰 본문을 저장하는 데이터 노드 간 복제 |
+| 백업 VM | 1 | DB 백업 보관 및 복구 검증 |
+| Kafka·Redis | 1 | 리뷰 메시지 전달 및 공용 캐시 |
+| Elasticsearch | 1 | 리뷰 본문 색인 및 검색 |
 
-## 6. 빌드 및 VM 실행
-
-```sh
-npm run build
-npm start
-```
-
-빌드 후에는 Node.js가 React 정적 파일과 API를 같은 3001 포트에서 제공합니다.
-http://localhost:3001 로 확인하세요. 개발 시에는 5173으로 접속합니다.
-웹 VM 두 대에 동일한 소스를 배포하고 HAProxy가 각 VM의 3001 포트로 전달하게 할 수 있습니다.
-HAProxy 헬스체크 경로: /api/health.
-방화벽은 실제 내부망·HAProxy 주소에 맞게 제한하세요. DB와 서비스 비밀키는 frontend에 넣지 마세요.
-
-## 7. 다음 개발 순서
-
-1. 디자인·메인페이지 구조 확정.
-2. 상세 모달을 별도 상세페이지로 확장하고 리뷰 목록·긍정/부정 필터 추가.
-3. 실제 수집 원본을 MySQL(게임), MongoDB(리뷰)에 저장하고 catalog.js 조회부 교체.
-4. 리뷰 정제·언어 처리·키워드 추출 작업 추가.
-5. Elasticsearch 검색, Redis 조회 캐시, Kafka 수집 이벤트 연결.
-6. DB 복제 및 VM 분산 배포·장애 테스트.
-
-고정된 목데이터를 사용하는 현재 앱은 다중 WEB에서 공유 쓰기 상태가 없습니다.
-실제 즐겨찾기·로그인 등은 공용 DB/세션 저장소를 도입하면서 추가하세요.
-=======
-# DB_PROJECT
->>>>>>> 659ee38f27229c36125076cc18bb301480e9b159
+VM 배포 시 기존 MySQL·MongoDB 데이터를 이전하고 Elasticsearch에서 최초 색인을 수행합니다. Web1에만 수집 Producer의 `systemd timer`와 상시 Consumer 서비스를 등록할 계획입니다. 배포 검증에는 HAProxy를 통한 검색, Web1·Web2의 Redis 캐시 공유, DB 복제 및 백업 복구가 포함됩니다.
