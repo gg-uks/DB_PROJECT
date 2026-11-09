@@ -13,7 +13,7 @@ const synonyms = {
   탐험: ["탐험"],
 };
 
-export function createCatalog({ games, reviews }) {
+export function createCatalog({ games, reviews, positiveVectors = new Map() }) {
   // 게임별로 리뷰를 묶어 상세 조회와 키워드 집계에서 재사용합니다.
   const reviewsByGame = new Map();
 
@@ -49,12 +49,18 @@ export function createCatalog({ games, reviews }) {
       (review) => review.recommended,
     ).length;
 
+    // 긍정률은 스팀 한국어 전체 리뷰 기준 (GAME.ko_positive · ko_negative).
+    // 수집 표본은 추천 125 · 비추천 125로 맞춰 뽑아서 표본 비율은 늘 50%라 의미가 없음
+    const koTotal = (game.koPositive ?? 0) + (game.koNegative ?? 0);
     return {
       ...game,
       reviewCount: gameReviews.length,
-      positiveRate: gameReviews.length
-        ? Math.round((positiveCount / gameReviews.length) * 100)
-        : 0,
+      koReviewTotal: koTotal,
+      positiveRate: koTotal && game.koPositivePct != null
+        ? game.koPositivePct // V_GAME_SUMMARY.ko_positive_pct
+        : gameReviews.length
+          ? Math.round((positiveCount / gameReviews.length) * 100)
+          : 0,
       keywords: keywords(game.id),
     };
   }
@@ -96,8 +102,43 @@ export function createCatalog({ games, reviews }) {
     };
   }
 
+  /**
+   * 취향 추천 (v2): 고른 게임들의 추천 리뷰 키워드 비율 벡터(GAME_KEYWORD, nori 명사)를 더해 취향을 만들고
+   * 다른 게임과 코사인 유사도로 비교. GAME_KEYWORD가 비어 있으면 예전 규칙 키워드 방식으로 대신함
+   */
+  function recommendByKeywords(selectedIds) {
+    const profile = new Map();
+    for (const id of selectedIds) {
+      for (const [word, ratio] of positiveVectors.get(id) ?? []) {
+        profile.set(word, (profile.get(word) ?? 0) + ratio);
+      }
+    }
+    const norm = (vector) => Math.sqrt([...vector.values()].reduce((sum, x) => sum + x * x, 0));
+    const profileNorm = norm(profile);
+    if (!profileNorm) return [];
+
+    return games
+      .filter((game) => !selectedIds.has(game.id) && positiveVectors.has(game.id))
+      .map((game) => {
+        const vector = positiveVectors.get(game.id);
+        const common = [...vector.keys()].filter((word) => profile.has(word));
+        const dot = common.reduce((sum, word) => sum + vector.get(word) * profile.get(word), 0);
+        return {
+          ...enrich(game),
+          score: dot / (profileNorm * norm(vector)),
+          matchedKeywords: common
+            .sort((a, b) => vector.get(b) * profile.get(b) - vector.get(a) * profile.get(a))
+            .slice(0, 4),
+          recommendMode: "game-keyword",
+        };
+      })
+      .filter((game) => game.score > 0)
+      .sort((a, b) => b.score - a.score);
+  }
+
   function recommend(ids) {
     const selectedIds = new Set(ids);
+    if (positiveVectors.size) return recommendByKeywords(selectedIds);
     const profile = new Map();
 
     // 선택한 게임들의 긍정 리뷰 키워드로 취향을 구성합니다.

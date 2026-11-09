@@ -5,13 +5,27 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
-    "start": "node --env-file-if-exists=.env src/server.js"
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "db:init": "node --env-file-if-exists=.env scripts/init-db.mjs",
+    "collect:details": "node --env-file-if-exists=.env scripts/collect-game-details.mjs",
+    "reviews:produce": "node --env-file-if-exists=.env scripts/steam-reviews.mjs produce",
+    "reviews:direct": "node --env-file-if-exists=.env scripts/steam-reviews.mjs direct",
+    "reviews:index": "node --env-file-if-exists=.env scripts/index-reviews.mjs",
+    "reviews:consume": "node --env-file-if-exists=.env scripts/steam-reviews.mjs consume",
+    "keywords:extract": "node --env-file-if-exists=.env scripts/extract-keywords.mjs",
+    "keywords:aggregate": "node --env-file-if-exists=.env scripts/aggregate-keywords.mjs",
+    "scheduler": "node --env-file-if-exists=.env scripts/scheduler.mjs",
+    "games:select": "node --env-file-if-exists=.env scripts/select-games.mjs",
+    "collect:ranks": "node --env-file-if-exists=.env scripts/collect-ranks.mjs",
+    "reviews:trim": "node --env-file-if-exists=.env scripts/trim-reviews.mjs"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.2",
     "express": "^5.0.0",
     "kafkajs": "^2.2.4",
     "mongodb": "^7.8.0",
     "mysql2": "^3.24.6",
+    "node-cron": "^4.2.1",
     "redis": "^6.3.1"
   }
 }

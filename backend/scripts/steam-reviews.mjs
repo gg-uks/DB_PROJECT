@@ -1,12 +1,31 @@
+/**
+ * 리뷰 수집 (매일 03:00, 게임 상세 다음) · 요구사항 8 ~ 12 · 18
+ *
+ *  produce : 게임마다 한국어 리뷰를 최신순으로
+ *            추천(review_type 1) 125건 + 비추천(review_type 2) 125건 = 250건까지 Kafka(steam.reviews)에 발행
+ *            - 3어절 미만 리뷰는 수집하지 않음
+ *            - 이미 저장한 가장 최근 리뷰(MAX(created_at))보다 오래된 리뷰가 나오면 멈춤 → 새 리뷰만 (요구사항 18)
+ *  consume : Kafka에서 받아 MongoDB review_text(원문) → MySQL REVIEW(mongo_id로 연결) → ES(검색) 순서로 저장
+ *            저장이 모두 끝난 뒤 오프셋 커밋 · 같은 리뷰는 UPSERT
+ *  (125건 초과분 정리는 trim-reviews.mjs)
+ *
+ * 실행: npm run reviews:produce -w backend / npm run reviews:consume -w backend
+ */
 import kafkaJs from "kafkajs";
-import mysql from "mysql2/promise";
-import { MongoClient } from "mongodb";
 import { setTimeout as delay } from "node:timers/promises";
+import { writePool as sql, mongoDb, closeDb } from "../src/db.js";
 import { indexReviews } from "../src/services/review-search.js";
+import { enableApiLog } from "../src/services/api-log.js";
+import { getReviewPage, wordCount } from "../src/integrations/steam-api.js";
 
 const { Kafka } = kafkaJs;
 const TOPIC = "steam.reviews";
-const TARGET = 1000;
+export const PER_SAMPLE = 125; // 추천 125 · 비추천 125
+const MAX_PAGES = Number(process.env.REVIEW_MAX_PAGES || 10); // 표본당 최대 페이지 (3어절 미만 제외로 더 넘길 수 있음)
+const SAMPLES = [
+  { votedUp: 1, reviewType: 1, label: "추천" },
+  { votedUp: 0, reviewType: 2, label: "비추천" },
+];
 
 const kafka = new Kafka({
   clientId: "playlog-reviews",
@@ -16,187 +35,176 @@ const kafka = new Kafka({
     .filter(Boolean),
 });
 
-const sql = mysql.createPool({
-  host: process.env.MYSQL_HOST || "127.0.0.1",
-  port: Number(process.env.MYSQL_PORT || 3306),
-  user: process.env.MYSQL_USER,
-  password: process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQL_DATABASE || "playlog_dev",
-  charset: "utf8mb4",
-  timezone: "Z",
-  connectionLimit: 2,
-});
-
-const mongo = new MongoClient(
-  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017",
-  { serverSelectionTimeoutMS: 5000 },
-);
-const contents = mongo
-  .db(process.env.MONGODB_DATABASE || "playlog")
-  .collection("review_contents");
-
-function reviewIdOf(review) {
+export function reviewIdOf(review) {
   const value = review.recommendationid;
-
-  // 큰 ID를 부정확한 숫자로 저장하지 않도록 검사합니다.
   if (typeof value === "number" && !Number.isSafeInteger(value)) {
     throw new Error("정밀도가 손실된 Steam 리뷰 ID입니다.");
   }
-
   const id = String(value);
-  if (!/^\d{1,20}$/.test(id)) {
-    throw new Error("Steam 리뷰 ID 형식이 올바르지 않습니다.");
-  }
+  if (!/^\d{1,20}$/.test(id)) throw new Error("Steam 리뷰 ID 형식이 올바르지 않습니다.");
   return id;
 }
 
-async function fetchReviewPage(appid, cursor) {
-  const url = new URL(
-    "https://api.steampowered.com/IUserReviewsService/GetAppReviews/v1/",
-  );
+export function cleanText(text) {
+  return String(text ?? "")
+    .replace(/\[\/?[^\]]+\]/g, " ") // BBCode
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  url.searchParams.set(
-    "input_json",
-    JSON.stringify({
-      appid,
-      languages: ["koreana"],
-      filter: 1,
-      num_per_page: 100,
-      cursor,
-    }),
+/**
+ * direct=true : Kafka 없이 바로 저장 (Windows 테스트용 · npm run reviews:direct)
+ *               Steam → MongoDB review_text → MySQL REVIEW
+ */
+async function produce({ direct = false } = {}) {
+  enableApiLog(sql);
+  const [games] = await sql.query(
+    `SELECT g.appid, g.name,
+            MAX(CASE WHEN r.voted_up = 1 THEN r.created_at END) AS last_pos,
+            MAX(CASE WHEN r.voted_up = 0 THEN r.created_at END) AS last_neg
+     FROM GAME g LEFT JOIN REVIEW r ON r.appid = g.appid
+     GROUP BY g.appid, g.name
+     ORDER BY g.appid`,
   );
-
-  const headers = {};
-  if (process.env.STEAM_WEB_API_KEY) {
-    headers["x-webapi-key"] = process.env.STEAM_WEB_API_KEY.trim();
+  if (!games.length) {
+    throw new Error("GAME이 비어 있습니다. 먼저 npm run collect:details -w backend 를 실행하세요.");
   }
 
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const response = await fetch(url, {
-      headers,
-      signal: AbortSignal.timeout(30000),
-    });
+  const producer = direct ? null : kafka.producer({ allowAutoTopicCreation: false });
+  const db = direct ? await mongoDb() : null;
+  if (direct) await db.collection("review_text").createIndex({ reviewId: 1 }, { unique: true });
+  let total = 0;
+  try {
+    if (producer) await producer.connect();
+    for (const game of games) {
+      const appid = Number(game.appid);
+      const counts = [];
+      for (const { votedUp, reviewType, label } of SAMPLES) {
+        const last = votedUp ? game.last_pos : game.last_neg;
+        const lastSeconds = last ? Math.floor(new Date(last).getTime() / 1000) : 0;
+        let cursor = "*";
+        let published = 0;
+        let short = 0;
 
-    if (response.ok) {
-      const payload = await response.json();
-      const page = payload.response ?? payload;
-
-      if (!Array.isArray(page?.reviews)) {
-        // API가 리뷰 0건을 명시하면 빈 페이지로 처리합니다.
-        if (page?.query_summary?.num_reviews === 0) {
-          return { reviews: [] };
+        for (let page = 0; page < MAX_PAGES && published < PER_SAMPLE; page++) {
+          let data;
+          try {
+            data = await getReviewPage(appid, { reviewType, cursor });
+          } catch (error) {
+            if (error.code !== "STEAM_REVIEW_PAGE_SHAPE") throw error;
+            console.warn(`${game.name} ${label} · ${error.message}`);
+            break;
+          }
+          const messages = [];
+          let reachedOld = false;
+          for (const review of data.reviews) {
+            if (lastSeconds && review.timestamp_created <= lastSeconds) {
+              reachedOld = true;
+              break;
+            }
+            if (typeof review.review !== "string" || wordCount(review.review) < 3) {
+              short++;
+              continue;
+            }
+            messages.push({ key: reviewIdOf(review), value: JSON.stringify({ appid, review }), review });
+            if (published + messages.length >= PER_SAMPLE) break;
+          }
+          if (messages.length) {
+            if (direct) {
+              for (const m of messages) await saveReview(db, appid, m.review);
+            } else {
+              await producer.send({ topic: TOPIC, acks: -1, messages: messages.map(({ key, value }) => ({ key, value })) });
+            }
+            published += messages.length;
+          }
+          if (reachedOld || !data.reviews.length || !data.cursor || data.cursor === cursor) break;
+          cursor = data.cursor;
+          await delay(1500);
         }
-
-        const error = new Error(
-          `리뷰 응답 형식 오류 · appid ${appid} · 응답 필드: ${
-            Object.keys(page ?? {}).join(", ") || "(없음)"
-          }`,
-        );
-        error.code = "STEAM_REVIEW_PAGE_SHAPE";
-        throw error;
+        counts.push(`새 ${label} ${published}건`);
+        if (short) counts.push(`3어절 미만 제외 ${short}건`);
+        total += published;
+        await delay(1500);
       }
-      return page;
+      console.log(`${game.name} · ${counts.join(" · ")}`);
     }
-
-    if (response.status === 429 && attempt < 3) {
-      const retryAfter = Number(response.headers.get("retry-after"));
-      await delay(Math.max(5000 * 2 ** attempt, retryAfter * 1000 || 0));
-      continue;
-    }
-
-    throw new Error(
-      `Steam 리뷰 요청 실패 · appid ${appid} · HTTP ${response.status}`,
-    );
+    console.log(direct ? `새 리뷰 총 ${total}건 저장 완료 (Kafka 없이)` : `steam.reviews에 새 리뷰 총 ${total}건 발행 완료`);
+  } finally {
+    if (producer) await producer.disconnect();
   }
 }
 
-async function produce() {
-  // 이미 MySQL에 있는 게임만 사용해 리뷰 외래키 오류를 방지합니다.
-  const [games] = await sql.query(
-    "SELECT appid, name FROM games ORDER BY appid",
-  );
-  const preferred = [413150, 105600, 892970, 1245620, 1091500, 570, 730];
-  const rank = (appid) => {
-    const index = preferred.indexOf(Number(appid));
-    return index === -1 ? preferred.length : index;
-  };
-  games.sort((a, b) => rank(a.appid) - rank(b.appid));
-
-  if (!games.length) throw new Error("MySQL games 테이블이 비어 있습니다.");
-
-  const producer = kafka.producer({ allowAutoTopicCreation: false });
-  const seen = new Set();
-
-  try {
-    await producer.connect();
-
-    for (const game of games) {
-      const appid = Number(game.appid);
-      let cursor = "*";
-
-      // 여러 게임의 리뷰를 확보하도록 게임당 최대 3페이지를 읽습니다.
-      for (
-        let pageNumber = 0;
-        pageNumber < 3 && seen.size < TARGET;
-        pageNumber++
-      ) {
-        let page;
-
-        try {
-          page = await fetchReviewPage(appid, cursor);
-        } catch (error) {
-          if (error.code !== "STEAM_REVIEW_PAGE_SHAPE") throw error;
-
-          console.warn(
-            `${game.name}의 남은 페이지를 건너뜁니다. ${error.message}`,
-          );
-          break; // 이 게임의 페이지 반복을 끝내고 다음 게임으로 이동
-        }
-        const messages = [];
-
-        for (const review of page.reviews) {
-          const id = reviewIdOf(review);
-          if (seen.has(id) || typeof review.review !== "string") continue;
-
-          seen.add(id);
-          messages.push({
-            key: id,
-            value: JSON.stringify({ appid, review }),
-          });
-
-          if (seen.size === TARGET) break;
-        }
-
-        if (messages.length) {
-          await producer.send({ topic: TOPIC, acks: -1, messages });
-          console.log(`${game.name} · 발행 누계 ${seen.size}/${TARGET}건`);
-        }
-
-        if (!page.reviews.length || !page.cursor || page.cursor === cursor)
-          break;
-        cursor = page.cursor;
-        if (seen.size < TARGET) await delay(1500);
-      }
-
-      if (seen.size === TARGET) break;
-      await delay(1500);
-    }
-
-    if (seen.size < TARGET) {
-      throw new Error(`발행 ${seen.size}건 · 목표 ${TARGET}건에 미달했습니다.`);
-    }
-
-    console.log(`steam.reviews에 서로 다른 리뷰 ${seen.size}건 발행 완료`);
-  } finally {
-    await producer.disconnect();
+/** 리뷰 1건 저장: MongoDB review_text(원문) → MySQL REVIEW(mongo_id). consume과 테스트에서 함께 사용 */
+export async function saveReview(db, appid, review) {
+  const id = reviewIdOf(review);
+  if (
+    !Number.isInteger(appid) ||
+    typeof review.review !== "string" ||
+    typeof review.voted_up !== "boolean" ||
+    !Number.isInteger(review.timestamp_created) ||
+    !/^\d{1,20}$/.test(String(review.author?.steamid ?? ""))
+  ) {
+    throw new Error(`리뷰 필드 확인 필요 · ${id}`);
   }
+  const steamid = String(review.author.steamid);
+  const cleaned = cleanText(review.review);
+  const toDate = (s) => (Number.isInteger(s) && s > 0 ? new Date(s * 1000) : null);
+  const texts = db.collection("review_text");
+
+  // 같은 작성자가 리뷰를 지우고 다시 쓴 경우: 예전 리뷰 정리 (UNIQUE (appid, steamid) · 요구사항 8)
+  const [old] = await sql.execute(
+    "SELECT review_id, mongo_id FROM REVIEW WHERE appid = ? AND steamid = ? AND review_id <> ?",
+    [appid, steamid, id],
+  );
+  for (const row of old) {
+    await sql.execute("DELETE FROM REVIEW WHERE review_id = ?", [row.review_id]);
+    await texts.deleteOne({ reviewId: String(row.review_id) });
+  }
+
+  // ① 원문(비정형) — MongoDB. author.num_reviews · hardware 등은 raw에만 남김 (요구사항 9)
+  const doc = await texts.findOneAndUpdate(
+    { reviewId: id },
+    {
+      $set: { reviewId: id, appid, original: review.review, cleaned, collectedAt: new Date(), raw: review },
+    },
+    { upsert: true, returnDocument: "after", projection: { _id: 1 } },
+  );
+  const mongoId = String((doc?.value ?? doc)?._id ?? "");
+  if (!/^[0-9a-f]{24}$/.test(mongoId)) throw new Error(`MongoDB _id를 받지 못했습니다 · ${id}`);
+
+  // ② 정형 — MySQL REVIEW. 리뷰가 수정됐으면 키워드를 지워 다시 추출되게 함
+  const updatedAt = toDate(review.timestamp_updated) ?? toDate(review.timestamp_created);
+  const [[prev]] = await sql.execute("SELECT updated_at FROM REVIEW WHERE review_id = ?", [id]);
+  if (prev && new Date(prev.updated_at).getTime() !== updatedAt.getTime()) {
+    await sql.execute("DELETE FROM REVIEW_KEYWORD WHERE review_id = ?", [id]);
+  }
+  const a = review.author ?? {};
+  const minutes = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+  await sql.execute(
+    `INSERT INTO REVIEW (review_id, appid, steamid, language, voted_up, created_at, updated_at,
+                         votes_up, votes_funny, steam_purchase, received_for_free, early_access,
+                         playtime_at_review, playtime_forever, last_played, mongo_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       voted_up = VALUES(voted_up), updated_at = VALUES(updated_at), votes_up = VALUES(votes_up),
+       votes_funny = VALUES(votes_funny), playtime_at_review = VALUES(playtime_at_review),
+       playtime_forever = VALUES(playtime_forever), last_played = VALUES(last_played), mongo_id = VALUES(mongo_id)`,
+    [
+      id, appid, steamid, String(review.language ?? "koreana").slice(0, 20), review.voted_up ? 1 : 0,
+      toDate(review.timestamp_created), updatedAt,
+      Number(review.votes_up ?? 0), Number(review.votes_funny ?? 0),
+      review.steam_purchase === false ? 0 : 1, review.received_for_free ? 1 : 0,
+      review.written_during_early_access ? 1 : 0,
+      minutes(a.playtime_at_review), minutes(a.playtime_forever), toDate(a.last_played), mongoId,
+    ],
+  );
+  return { id, cleaned, mongoId };
 }
 
 async function consume() {
-  const consumer = kafka.consumer({
-    groupId: "playlog-reviews-db-v1",
-    allowAutoTopicCreation: false,
-  });
+  const db = await mongoDb();
+  await db.collection("review_text").createIndex({ reviewId: 1 }, { unique: true });
+  const consumer = kafka.consumer({ groupId: "playlog-reviews-db-v3", allowAutoTopicCreation: false });
 
   let closing = false;
   async function close() {
@@ -205,15 +213,13 @@ async function consume() {
     try {
       await consumer.disconnect();
     } finally {
-      await Promise.all([sql.end(), mongo.close()]);
+      await closeDb();
     }
   }
-
   const onError = (error) => {
     console.error("Consumer 실패:", error.message);
     process.exitCode = 1;
   };
-
   process.once("SIGINT", () => close().catch(onError));
   process.once("SIGTERM", () => close().catch(onError));
   consumer.on(consumer.events.CRASH, ({ payload }) => {
@@ -225,106 +231,22 @@ async function consume() {
   });
 
   try {
-    await sql.query("SELECT review_id FROM reviews LIMIT 1");
-    await mongo.connect();
+    await sql.query("SELECT review_id FROM REVIEW LIMIT 1");
     await consumer.connect();
     await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
-
     console.log("steam.reviews 수신 대기 중");
 
     await consumer.run({
       autoCommit: false,
       eachMessage: async ({ topic, partition, message }) => {
         const { appid, review } = JSON.parse(message.value.toString());
-        const id = reviewIdOf(review);
-
-        if (
-          !Number.isInteger(appid) ||
-          appid < 1 ||
-          typeof review.review !== "string" ||
-          typeof review.language !== "string" ||
-          typeof review.voted_up !== "boolean" ||
-          !Number.isInteger(review.timestamp_created) ||
-          !Number.isInteger(review.timestamp_updated)
-        ) {
-          throw new Error(`리뷰 필드 확인 필요 · ${id}`);
+        const { id, cleaned } = await saveReview(db, appid, review);
+        if (cleaned && process.env.ELASTICSEARCH_URL) {
+          await indexReviews([{ id, gameId: appid, text: cleaned, keywords: [], recommended: review.voted_up }]);
         }
-
-        const writtenAt = new Date(review.timestamp_created * 1000);
-        const updatedAt = new Date(review.timestamp_updated * 1000);
-        const collectedAt = new Date();
-        const cleanedText = review.review
-          .replace(/\[\/?[^\]]+\]/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-
-        await contents.updateOne(
-          { _id: id },
-          {
-            $set: {
-              gameId: appid,
-              originalText: review.review,
-              cleanedText,
-              sourceUpdatedAt: updatedAt,
-              collectedAt,
-              schemaVersion: 1,
-              raw: review,
-            },
-          },
-          { upsert: true },
-        );
-
-        await sql.execute(
-          `INSERT INTO reviews (
-             review_id, appid, language, recommended,
-             playtime_at_review_minutes, helpful_votes,
-             written_at, source_updated_at, collected_at, content_status
-           )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
-           ON DUPLICATE KEY UPDATE
-             language = VALUES(language),
-             recommended = VALUES(recommended),
-             playtime_at_review_minutes = VALUES(playtime_at_review_minutes),
-             helpful_votes = VALUES(helpful_votes),
-             written_at = VALUES(written_at),
-             source_updated_at = VALUES(source_updated_at),
-             collected_at = VALUES(collected_at),
-             content_status = 'ready'`,
-          [
-            id,
-            appid,
-            review.language,
-            review.voted_up,
-            review.author?.playtime_at_review ?? null,
-            review.votes_up ?? 0,
-            writtenAt,
-            updatedAt,
-            collectedAt,
-          ],
-        );
-
-        if (cleanedText.trim()) {
-          await indexReviews([
-            {
-              id,
-              gameId: appid,
-              text: cleanedText,
-              keywords: [],
-              recommended: review.voted_up,
-            },
-          ]);
-        }
-
-        // 양쪽 DB 저장이 성공한 뒤 다음 오프셋을 커밋합니다.
-        await consumer.commitOffsets([
-          {
-            topic,
-            partition,
-            offset: (BigInt(message.offset) + 1n).toString(),
-          },
-        ]);
-
-        console.log(`리뷰 저장 완료 · appid ${appid} · 리뷰 ${id}`);
+        // 저장이 모두 성공한 뒤 다음 오프셋을 커밋
+        await consumer.commitOffsets([{ topic, partition, offset: (BigInt(message.offset) + 1n).toString() }]);
+        console.log(`리뷰 저장 · appid ${appid} · ${review.voted_up ? "추천" : "비추천"} · ${id}`);
       },
     });
   } catch (error) {
@@ -333,21 +255,22 @@ async function consume() {
   }
 }
 
-const mode = process.argv[2];
-
-try {
-  if (mode === "consume") {
-    await consume();
-  } else if (mode === "produce") {
-    try {
-      await produce();
-    } finally {
-      await sql.end();
+if (process.argv[1]?.endsWith("steam-reviews.mjs")) {
+  const mode = process.argv[2];
+  try {
+    if (mode === "consume") {
+      await consume();
+    } else if (mode === "produce" || mode === "direct") {
+      try {
+        await produce({ direct: mode === "direct" });
+      } finally {
+        await closeDb();
+      }
+    } else {
+      throw new Error("실행 모드로 produce · consume · direct 중 하나를 지정하세요.");
     }
-  } else {
-    throw new Error("실행 모드로 produce 또는 consume을 지정하세요.");
+  } catch (error) {
+    console.error("실패:", error.message);
+    process.exitCode = 1;
   }
-} catch (error) {
-  console.error("실패:", error.message);
-  process.exitCode = 1;
 }
