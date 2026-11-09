@@ -5,7 +5,10 @@ const { Kafka } = kafkaJs;
 
 const kafka = new Kafka({
   clientId: "playlog-mysql",
-  brokers: [process.env.KAFKA_BROKERS || "localhost:9092"],
+  brokers: (process.env.KAFKA_BROKERS || "localhost:9092")
+    .split(",")
+    .map((broker) => broker.trim())
+    .filter(Boolean),
 });
 
 const consumer = kafka.consumer({

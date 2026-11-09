@@ -6,6 +6,7 @@ import {
   readSnapshot,
   readReviewPage,
   reviewPlaytimeGroups,
+  reviewSortKeys,
   readGameRatings,
 } from "./repositories/storage.js";
 import {
@@ -13,12 +14,18 @@ import {
   searchReviewGames,
 } from "./services/review-search.js";
 import authRouter from "./routes/auth.js";
+import meRouter from "./routes/me.js";
+import analyticsRouter from "./routes/analytics.js";
+import adminRouter from "./routes/admin.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 
 app.use(express.json({ limit: "32kb" }));
 app.use("/api/auth", authRouter);
+app.use("/api/me", meRouter);
+app.use("/api/analytics", analyticsRouter);
+app.use("/api/admin", adminRouter); // 관리자 전용 (ADMIN_EMAILS)
 
 const api = express.Router();
 
@@ -58,6 +65,7 @@ api.get("/games/:id/reviews", async (req, res) => {
     sentiment = "all",
     playtime = "all",
     keyword = "",
+    sort = "recent",
   } = req.query;
 
   if (!Number.isSafeInteger(gameId) || gameId < 1) {
@@ -77,6 +85,7 @@ api.get("/games/:id/reviews", async (req, res) => {
   if (
     !["all", "positive", "negative"].includes(sentiment) ||
     !["all", ...reviewPlaytimeGroups].includes(playtime) ||
+    !reviewSortKeys.includes(sort) ||
     typeof keyword !== "string" ||
     keyword.length > 80
   ) {
@@ -89,6 +98,7 @@ api.get("/games/:id/reviews", async (req, res) => {
       requestedPage: Number(page),
       sentiment,
       playtime,
+      sort,
     });
     if (!result) {
       return res.status(404).json({ error: "게임을 찾을 수 없습니다." });

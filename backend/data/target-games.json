@@ -1,0 +1,125 @@
+{
+  "_설명": "수집 대상 30개 (설계서: 주간 최다 플레이 상위 100 중 한국어 비추천 100건 이상 · 6개 분류 × 5개). npm run games:select -w backend 로 후보를 다시 뽑아 바꾸세요. appid는 store.steampowered.com/app/<appid>/ 의 숫자입니다.",
+  "games": [
+    {
+      "appid": 413150,
+      "name": "Stardew Valley"
+    },
+    {
+      "appid": 105600,
+      "name": "Terraria"
+    },
+    {
+      "appid": 892970,
+      "name": "Valheim"
+    },
+    {
+      "appid": 1245620,
+      "name": "ELDEN RING"
+    },
+    {
+      "appid": 1091500,
+      "name": "Cyberpunk 2077"
+    },
+    {
+      "appid": 570,
+      "name": "Dota 2"
+    },
+    {
+      "appid": 730,
+      "name": "Counter-Strike 2"
+    },
+    {
+      "appid": 1086940,
+      "name": "Baldur's Gate 3"
+    },
+    {
+      "appid": 292030,
+      "name": "The Witcher 3"
+    },
+    {
+      "appid": 367520,
+      "name": "Hollow Knight"
+    },
+    {
+      "appid": 1145360,
+      "name": "Hades"
+    },
+    {
+      "appid": 548430,
+      "name": "Deep Rock Galactic"
+    },
+    {
+      "appid": 252490,
+      "name": "Rust"
+    },
+    {
+      "appid": 578080,
+      "name": "PUBG"
+    },
+    {
+      "appid": 1172470,
+      "name": "Apex Legends"
+    },
+    {
+      "appid": 374320,
+      "name": "DARK SOULS III"
+    },
+    {
+      "appid": 814380,
+      "name": "Sekiro"
+    },
+    {
+      "appid": 381210,
+      "name": "Dead by Daylight"
+    },
+    {
+      "appid": 322330,
+      "name": "Don't Starve Together"
+    },
+    {
+      "appid": 264710,
+      "name": "Subnautica"
+    },
+    {
+      "appid": 1174180,
+      "name": "Red Dead Redemption 2"
+    },
+    {
+      "appid": 271590,
+      "name": "Grand Theft Auto V"
+    },
+    {
+      "appid": 990080,
+      "name": "Hogwarts Legacy"
+    },
+    {
+      "appid": 945360,
+      "name": "Among Us"
+    },
+    {
+      "appid": 1966720,
+      "name": "Lethal Company"
+    },
+    {
+      "appid": 2358720,
+      "name": "Black Myth: Wukong"
+    },
+    {
+      "appid": 1623730,
+      "name": "Palworld"
+    },
+    {
+      "appid": 230410,
+      "name": "Warframe"
+    },
+    {
+      "appid": 359550,
+      "name": "Rainbow Six Siege"
+    },
+    {
+      "appid": 4000,
+      "name": "Garry's Mod"
+    }
+  ]
+}

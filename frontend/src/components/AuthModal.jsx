@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 
-export default function AuthModal({ mode, onClose, onModeChange, onSuccess }) {
+export default function AuthModal({ mode, onClose, onModeChange, onSuccess, onSignedUp, initialEmail = "" }) {
   const dialogRef = useRef(null);
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
   const [error, setError] = useState("");
@@ -57,10 +57,8 @@ export default function AuthModal({ mode, onClose, onModeChange, onSuccess }) {
       }
 
       if (isSignup) {
-        // 회원가입 후 자동 로그인하지 않고 로그인 화면으로 이동
-        onModeChange("login");
-        setPassword("");
-        setMessage("회원가입이 완료되었습니다. 로그인해주세요.");
+        // 회원가입 후 자동 로그인하지 않음 → 화면 가운데 알림창(AlertDialog)으로 안내하고 로그인으로 이어짐
+        onSignedUp?.({ email: email.trim(), nickname: nickname.trim() });
       } else {
         // 백엔드 로그인 응답 형식: { user: { id, email, nickname } }
         if (!data.user) {
@@ -134,7 +132,7 @@ export default function AuthModal({ mode, onClose, onModeChange, onSuccess }) {
             autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            maxLength={254}
+            maxLength={100}
             required
             disabled={loading}
             placeholder="example@email.com"
@@ -149,7 +147,7 @@ export default function AuthModal({ mode, onClose, onModeChange, onSuccess }) {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             minLength={isSignup ? 8 : undefined}
-            maxLength={128}
+            maxLength={72}
             required
             disabled={loading}
             placeholder={isSignup ? "8자 이상 입력" : "비밀번호 입력"}
