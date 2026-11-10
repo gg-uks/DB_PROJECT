@@ -1,99 +1,288 @@
-# PLAYLOG — 게임 리뷰 검색·추천 개발 시작점
+# PLAYLOG — 스팀 한국어 리뷰 키워드 분석 플랫폼
 
-> DB 테이블 생성 · 수집 · 키워드 집계 방법은 [backend/db/README.md](backend/db/README.md)를 보세요.
+> DB 프로젝트 · 팀원 김남국 · 한예찬 · 황시영
+> 스팀 한국어 리뷰를 모아, 유저들이 각 게임을 어떤 단어로 이야기하는지 보여 주는 서비스
 
-Steam의 어두운 색상, 2단 메뉴, 대형 추천 배너를 참고한 독립 학습용 프로젝트입니다.
-React + Vite 프론트엔드와 Node.js + Express 백엔드를 포함합니다. DB, Redis, Kafka, Elasticsearch는 아직 필요 없습니다.
+> 📝 이 문서에서 `✏️ 작성 필요` 상자가 있는 곳은 담당 팀원이 내용을 채울 자리입니다. 채운 뒤 상자(`> [!IMPORTANT]` 블록)는 지웁니다.
 
-## 1. 개발 환경
+## 📐 DB 설계 (ERD)
 
-Node.js 24 LTS와 npm을 설치하세요. Windows에서는 VS Code 터미널(PowerShell 또는 CMD)에서 실행할 수 있습니다.
-압축 해제 후 package.json이 있는 game-review 폴더를 엽니다.
+![PLAYLOG ERD](docs/images/erd.png)
 
-```sh
-cd game-review
-npm ci
-npm run dev
+- **MySQL 테이블 14개 · 모두 3NF** — `GAME_KEYWORD`만 화면 속도를 위한 의도적 반정규화
+- 왼쪽 열 = 논리 이름(한글) · 가운데 = 물리 이름 · 오른쪽 = MySQL 타입 (ERDCloud)
+- 실선 = 식별 관계 (부모 키가 자식 PK의 일부) · 점선 = 비식별 관계 (`GAME` → `REVIEW`)
+- 리뷰 **본문(비정형)** 은 MongoDB `review_text` 에 두고 `REVIEW.mongo_id` 로 1:1 연결
+
+<details>
+<summary>ERD 코드 (Mermaid — 깃허브가 바로 그려 줌)</summary>
+
+```mermaid
+erDiagram
+  GAME {
+    int appid PK "앱 번호"
+    varchar name "게임 이름"
+    boolean is_free "무료 여부"
+    tinyint required_age "이용 연령"
+    date release_date "출시일"
+    boolean coming_soon "출시 예정 여부"
+    tinyint metacritic "메타크리틱 점수"
+    varchar header_image "대표 이미지 URL"
+    int recommendations_total "전체 언어 추천 수"
+    tinyint ko_review_score "한국어 평가 등급(1~9)"
+    int ko_positive "한국어 추천 수"
+    int ko_negative "한국어 비추천 수"
+    int initial_price "정가(원)"
+    int final_price "판매가(원)"
+    char currency "통화"
+    date rank_date "순위 기준일"
+    smallint rank_no "순위"
+    smallint last_week_rank "지난주 순위"
+    int peak_in_game "주간 최고 동시 접속자"
+    datetime updated_at "마지막 수집 시각"
+  }
+  GENRE {
+    int genre_id PK "장르 번호(스팀)"
+    varchar name "장르명"
+  }
+  GAME_GENRE {
+    int appid PK,FK "앱 번호"
+    int genre_id PK,FK "장르 번호"
+  }
+  CATEGORY {
+    int category_id PK "카테고리 번호(스팀)"
+    varchar name "카테고리명"
+  }
+  GAME_CATEGORY {
+    int appid PK,FK "앱 번호"
+    int category_id PK,FK "카테고리 번호"
+  }
+  COMPANY {
+    int company_id PK "회사 번호"
+    varchar name UK "회사명"
+  }
+  GAME_COMPANY {
+    int appid PK,FK "앱 번호"
+    int company_id PK,FK "회사 번호"
+    enum role PK "역할(개발/배급)"
+  }
+  REVIEW {
+    bigint review_id PK "리뷰 번호"
+    int appid FK "앱 번호"
+    bigint steamid "작성자 스팀ID"
+    varchar language "언어"
+    boolean voted_up "추천 여부"
+    datetime created_at "작성 시각"
+    datetime updated_at "수정 시각"
+    int votes_up "도움됨 수"
+    int votes_funny "웃김 수"
+    boolean steam_purchase "스팀 구매 여부"
+    boolean received_for_free "무료 획득 여부"
+    boolean early_access "앞서 해보기 중 작성"
+    int playtime_at_review "작성 시 플레이 시간(분)"
+    int playtime_forever "누적 플레이 시간(분)"
+    datetime last_played "마지막 플레이 시각"
+    char mongo_id UK "원문 번호(MongoDB _id)"
+  }
+  KEYWORD {
+    int keyword_id PK "키워드 번호"
+    varchar word UK "단어"
+  }
+  REVIEW_KEYWORD {
+    bigint review_id PK,FK "리뷰 번호"
+    int keyword_id PK,FK "키워드 번호"
+    smallint tf "등장 횟수"
+  }
+  GAME_KEYWORD {
+    int appid PK,FK "앱 번호"
+    int keyword_id PK,FK "키워드 번호"
+    boolean voted_up PK "추천 여부"
+    int review_cnt "나온 리뷰 수"
+  }
+  MEMBER {
+    bigint member_id PK "회원 번호"
+    varchar email UK "이메일"
+    varchar password_hash "비밀번호 해시"
+    varchar nickname "닉네임"
+    datetime created_at "가입일"
+  }
+  WISHLIST {
+    bigint member_id PK,FK "회원 번호"
+    int appid PK,FK "앱 번호"
+    datetime added_at "찜한 시각"
+  }
+  API_SYNC_LOG {
+    bigint log_id PK "로그 번호"
+    varchar api "API 이름"
+    int appid "대상 앱 번호(FK 없음)"
+    datetime req_at "요청 시각"
+    smallint status_code "응답 코드"
+    int item_count "받은 건수"
+    varchar error_msg "오류 내용"
+  }
+  GAME ||--o{ GAME_GENRE : "appid"
+  GENRE ||--o{ GAME_GENRE : "genre_id"
+  GAME ||--o{ GAME_CATEGORY : "appid"
+  CATEGORY ||--o{ GAME_CATEGORY : "category_id"
+  GAME ||--o{ GAME_COMPANY : "appid"
+  COMPANY ||--o{ GAME_COMPANY : "company_id"
+  GAME ||..o{ REVIEW : "appid"
+  REVIEW ||--o{ REVIEW_KEYWORD : "review_id"
+  KEYWORD ||--o{ REVIEW_KEYWORD : "keyword_id"
+  GAME ||--o{ GAME_KEYWORD : "appid"
+  KEYWORD ||--o{ GAME_KEYWORD : "keyword_id"
+  MEMBER ||--o{ WISHLIST : "member_id"
+  GAME ||--o{ WISHLIST : "appid"
 ```
+</details>
 
-- 화면: http://localhost:5173
-- API 상태: http://localhost:3001/api/health
-- 종료: Ctrl+C
-- 루트에서 한 번 설치하면 frontend/backend가 npm workspaces로 함께 설치됩니다.
-- 기본 포트: 프론트 5173, 백엔드 3001. 다른 프로그램이 사용 중이면 종료하거나 설정을 함께 수정하세요.
-- 개발 프록시: frontend/vite.config.js에서 /api를 3001로 전달합니다.
-- backend/.env.example을 backend/.env로 복사하면 PORT를 설정할 수 있습니다. 변경하면 프론트 프록시 포트도 맞추세요.
+| 영역 | 테이블 |
+|---|---|
+| 게임 · 분류 | `GAME` · `GENRE` · `GAME_GENRE` · `CATEGORY` · `GAME_CATEGORY` · `COMPANY` · `GAME_COMPANY` |
+| 리뷰 · 키워드 | `REVIEW` · `KEYWORD` · `REVIEW_KEYWORD` · `GAME_KEYWORD`(반정규화) |
+| 회원 · 수집 | `MEMBER` · `WISHLIST` · `API_SYNC_LOG`(FK 없는 로그) |
+| 뷰 | `V_GAME_SUMMARY` — 할인율 · 긍정률 · 마지막 리뷰 시각 (계산값은 저장하지 않음) |
 
-## 2. 현재 화면과 동작
+설계 과정: 요구사항 명세(19문장) → 엔티티 8 · 관계 7 (E-R 다이어그램) → 비정규형 → 1NF → 2NF → 3NF → 물리 설계(타입 · 도메인 · 인덱스)
 
-- 네이비 배경, 상단 메뉴, 자연어 형태 입력창
-- 추천 배너와 수동 슬라이드 전환
-- 게임 카드 8개, 태그 필터, 검색 결과 및 빈 결과
-- 게임 카드 클릭 시 상세 모달과 키워드 크기 미리보기
-- 재밌게 한 게임 선택 → 긍정 리뷰의 키워드 벡터 코사인 유사도로 다른 게임 추천
-- 모바일 대응, API 오류 표시
+---
 
-모든 리뷰와 가격은 목데이터입니다. 게임 제목과 외부 Steam 이미지 URL은 시각적 시연에 사용합니다.
-외부 이미지 로딩에는 인터넷 연결이 필요합니다. 이미지가 차단돼도 제목·태그·API는 동작합니다.
-공식 Steam 로그인·결제·스토어 연동은 없습니다.
+## 🧱 기술 스택
 
-## 3. 검색·분석 범위
+| 구분 | 사용 기술 |
+|---|---|
+| 프론트엔드 | React 19 · Vite 7 · Recharts 3 |
+| 백엔드 | Node.js 22 · Express 5 · node-cron |
+| 정형 DB | MySQL 8.4 — Source(쓰기) → Replica(읽기) GTID 복제 |
+| 비정형 DB | MongoDB — 복제 세트 3노드 (자동 장애 조치) |
+| 검색 | Elasticsearch 9.5 + analysis-nori (한국어 형태소 분석) |
+| 캐시 | Valkey (Redis 호환) |
+| 메시징 | Apache Kafka 4.3 (KRaft) — 리뷰 수집 큐 · 파티션 2 |
+| 인프라 | Rocky Linux 10 VM · HAProxy · nginx · pm2 |
+| 데이터 출처 | Steam 공식 Web API (GetMostPlayedGames · appdetails · GetAppReviews) |
 
-검색은 한국어 동의어 사전과 목리뷰 키워드 집계 방식이며 LLM/의미 검색이 아닙니다.
-예: 친구와 함께, 혼자 즐기는 스토리, 힐링 농장 게임.
-검색 문장의 부정 표현(예: 어렵지 않은 게임)은 아직 해석하지 않습니다.
-리뷰 키워드는 시연을 위해 수동 라벨링했으며 본문에서 자동 추출하지 않습니다.
-워드클라우드는 빈도에 따른 크기 표시의 초기 형태로 실제 단어 충돌 배치 엔진은 사용하지 않습니다.
-각 게임에 샘플 리뷰 12건(긍정 9건/부정 3건)이 있습니다. 통계는 실제 Steam 평가가 아닙니다.
+## 👥 역할 분담
 
-## 4. 폴더
-
-```text
-frontend/src/main.jsx             화면과 API 호출
-frontend/src/style.css            스타일·반응형
-frontend/vite.config.js           개발 프록시
-backend/src/server.js             HTTP 라우트
-backend/src/services/catalog.js   데이터 조회·키워드 집계·추천
-backend/src/mocks/games.json      정형 목게임 8건
-backend/src/mocks/reviews.json    목리뷰 96건
-```
-
-## 5. API
-
-| Method | 경로 | 요청 |
+| 담당 | 맡은 부분 | 문서 |
 |---|---|---|
-| GET | /api/health | 없음 |
-| GET | /api/games | 없음 |
-| GET | /api/games/:id | 없음 |
-| GET | /api/games/:id/reviews | 없음 |
-| GET | /api/games/:id/keywords | 없음 |
-| POST | /api/search | {"query":"친구와 함께"} |
-| POST | /api/recommendations | {"gameIds":[413150]} |
+| 김남국 | DB 설계 · HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
+| ✏️ (이름) | NAT 게이트웨이 · 네트워크 | 아래 [NAT](#-nat-게이트웨이) |
+| ✏️ (이름) | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | 아래 [MongoDB](#-mongodb-클러스터) |
+| ✏️ (이름) | 백업 서버 (.41) · 백업 전략 | 아래 [백업](#-백업-전략) |
 
-게임 id는 Steam 앱 ID를 사용하며 리뷰의 gameId와 연결됩니다.
-POST는 Content-Type: application/json으로 전송합니다.
+> [!IMPORTANT]
+> ✏️ **작성 필요 — 담당: 팀원**
+> 담당자 이름과 맡은 부분이 다르면 위 표를 고쳐 주세요.
 
-## 6. 빌드 및 VM 실행
+## 🗺️ 아키텍처
 
-```sh
-npm run build
-npm start
+```mermaid
+flowchart LR
+  U[사용자] --> NAT[NAT GW] --> HA[HAProxy .10]
+  HA --> W1[WEB1 .11<br/>nginx · React · API<br/>consumer · scheduler]
+  HA --> W2[WEB2 .12<br/>nginx · React · API<br/>consumer]
+  W1 & W2 -->|쓰기| MS[(MySQL Source .21)]
+  W1 & W2 -->|읽기| MR[(MySQL Replica .23)]
+  MS -. 복제 .-> MR
+  W1 & W2 --> MG[(MongoDB rs0<br/>.22 · .24 · .25)]
+  W1 & W2 --> K[Kafka + Valkey .31]
+  W1 & W2 --> ES[Elasticsearch .33]
+  MS & MG -. 백업 .-> BK[(백업 서버 .41)]
 ```
 
-빌드 후에는 Node.js가 React 정적 파일과 API를 같은 3001 포트에서 제공합니다.
-http://localhost:3001 로 확인하세요. 개발 시에는 5173으로 접속합니다.
-웹 VM 두 대에 동일한 소스를 배포하고 HAProxy가 각 VM의 3001 포트로 전달하게 할 수 있습니다.
-HAProxy 헬스체크 경로: /api/health.
-방화벽은 실제 내부망·HAProxy 주소에 맞게 제한하세요. DB와 서비스 비밀키는 frontend에 넣지 마세요.
+| IP | 서버 | 역할 | 담당 |
+|---|---|---|---|
+| ✏️ 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | ✏️ |
+| 192.168.56.10 | HAProxy | 부하 분산 (roundrobin) | 김남국 |
+| 192.168.56.11 · .12 | WEB1 · WEB2 | nginx · React · Node API · consumer (WEB1 + scheduler) | 김남국 |
+| 192.168.56.21 · .23 | MySQL | Source(쓰기) · Replica(읽기) | 김남국 |
+| 192.168.56.22 · .24 · .25 | MongoDB | 복제 세트 rs0 (3노드) | ✏️ |
+| 192.168.56.31 | Kafka + Valkey | 리뷰 수집 큐 · 캐시 | 김남국 |
+| 192.168.56.33 | Elasticsearch | nori 형태소 분석 · 검색 | 김남국 |
+| 192.168.56.41 | 백업 서버 | 덤프 보관 | ✏️ |
 
-## 7. 다음 개발 순서
+---
 
-1. 디자인·메인페이지 구조 확정.
-2. 상세 모달을 별도 상세페이지로 확장하고 리뷰 목록·긍정/부정 필터 추가.
-3. 실제 수집 원본을 MySQL(게임), MongoDB(리뷰)에 저장하고 catalog.js 조회부 교체.
-4. 리뷰 정제·언어 처리·키워드 추출 작업 추가.
-5. Elasticsearch 검색, Redis 조회 캐시, Kafka 수집 이벤트 연결.
-6. DB 복제 및 VM 분산 배포·장애 테스트.
+## 🌐 NAT 게이트웨이
 
-고정된 목데이터를 사용하는 현재 앱은 다중 WEB에서 공유 쓰기 상태가 없습니다.
-실제 즐겨찾기·로그인 등은 공용 DB/세션 저장소를 도입하면서 추가하세요.
+> [!IMPORTANT]
+> ✏️ **작성 필요 — 담당: (이름)**
+> 아래 항목을 채워 주세요.
+
+- **역할**: ✏️ (예: 외부 네트워크 → 내부 192.168.56.0/24 연결, 80번 포트를 HAProxy로 포워딩)
+- **네트워크 구성**: ✏️ (외부 인터페이스 · 내부 인터페이스 · IP)
+- **설정 방법**:
+```bash
+# ✏️ 사용한 명령 (예: IP 포워딩 켜기 · firewalld masquerade · 포트 포워딩)
+```
+- **확인 방법**: ✏️ (예: 외부 PC 브라우저에서 http://192.168.0.224 접속)
+
+---
+
+## 🍃 MongoDB 클러스터
+
+> [!IMPORTANT]
+> ✏️ **작성 필요 — 담당: (이름)**
+> 아래 항목을 채워 주세요. .25 추가 절차는 [`docs/INFRA.md` 9절](docs/INFRA.md#9-db-클러스터--mongodb-복제-세트-3노드)에 정리돼 있습니다.
+
+- **버전**: ✏️ MongoDB x.x
+- **구성**: 복제 세트 `rs0` — Primary .22 · Secondary .24 · Secondary .25 (✏️ 실제 구성 확인)
+- **인증**: ✏️ (keyFile 방식 · 관리자 계정 · 앱 계정 `playlog` = playlog DB readWrite)
+- **설정 파일** `/etc/mongod.conf`:
+```yaml
+# ✏️ net · replication · security 부분
+```
+- **복제 세트 만들기**:
+```js
+// ✏️ rs.initiate(...) · rs.add(...) 에 쓴 명령
+```
+- **장애 조치 시험 결과**: ✏️ (Primary를 멈췄을 때 새 Primary가 뽑히기까지 걸린 시간 · 화면 확인)
+- **컬렉션**: `review_text`(리뷰 원문) · `game_raw`(Steam 원본 JSON) — 쿼리는 [`docs/QUERIES.md` 2절](docs/QUERIES.md#2-mongodb-playlog-db--mongosh)
+
+---
+
+## 💾 백업 전략
+
+> [!IMPORTANT]
+> ✏️ **작성 필요 — 담당: (이름)**
+> 아래 항목을 채워 주세요. 현재 복제(이중화)는 구성 완료, 백업은 계획 단계입니다.
+
+- **이중화 vs 백업**: 복제는 서버 장애 대비(지금 상태의 사본) · 백업은 실수로 지운 데이터를 과거 시점으로 복구
+- **대상**: 반드시 — `MEMBER` · `WISHLIST` (다시 만들 수 없음) / 재수집 가능 — 게임 · 리뷰 · 키워드 · ES
+- **방법** (✏️ 실제 적용한 내용으로):
+```bash
+# ✏️ MySQL: mysqldump --single-transaction (Replica .23에서) → .41
+# ✏️ MongoDB: mongodump --gzip (Secondary에서) → .41
+# ✏️ cron 일정 · 보관 기간 (예: 매일 05:30 · 7일)
+```
+- **복구 시험**: ✏️ (테스트 DB에 복원 → 테이블별 행 수 비교 결과)
+
+---
+
+## 📊 수집 결과 (2026-11-10)
+
+게임 30개 · 리뷰 7,493건 (추천 3,750 · 비추천 3,743) · `GAME_KEYWORD` 32,322행 · ES 문서 7,493건
+
+---
+
+## 📚 문서
+
+| 문서 | 내용 |
+|---|---|
+| [`docs/INFRA.md`](docs/INFRA.md) | 서버 구성 · 설치 순서 체크리스트 · 서버별 설정 · 겪은 문제와 해결 |
+| [`docs/QUERIES.md`](docs/QUERIES.md) | 쿼리 전체 (SQL 34개 목록 · MongoDB · Elasticsearch · Redis · Kafka · EXPLAIN 측정) |
+| [`backend/db/ALL_QUERIES.sql`](backend/db/ALL_QUERIES.sql) | 코드에서 쓰는 SQL 원문 + 설명 (Workbench에서 바로 실행) |
+| [`backend/db/schema.sql`](backend/db/schema.sql) | 실제 테이블 정의 (인덱스 · 제약 · 뷰 포함) |
+| [`backend/db/erdcloud.sql`](backend/db/erdcloud.sql) | ERDCloud 가져오기용 DDL |
+| [`backend/db/perf/`](backend/db/perf/README.md) | 인덱스 · 쿼리 수정 성능 측정 스크립트 |
+| [`infra/`](infra/README.md) | 서버별 설정 파일 (HAProxy · nginx · pm2 · MySQL · MongoDB · Kafka · ES · Valkey) |
+
+## ▶️ 로컬 실행
+
+```sh
+npm ci                                   # frontend · backend 함께 설치
+cp backend/.env.example backend/.env     # DB 접속 정보 입력
+npm run db:init -w backend               # 테이블 · 뷰 생성
+npm run dev                              # 화면 http://localhost:5173 · API http://localhost:3001/api/health
+```
+VM 배치는 [`docs/INFRA.md`](docs/INFRA.md) 0절 체크리스트를 따른다.
