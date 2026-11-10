@@ -1,0 +1,10 @@
+# /opt/kafka/config/server.properties 에서 바꾸는 값
+process.roles=broker,controller
+node.id=1
+controller.quorum.voters=1@localhost:9093
+listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://localhost:9093
+advertised.listeners=PLAINTEXT://192.168.56.31:9092    # 웹 서버가 접속할 주소
+controller.listener.names=CONTROLLER
+log.dirs=/var/lib/kafka
+num.partitions=2
+auto.create.topics.enable=false                         # 앱도 자동 생성 안 함

@@ -1,0 +1,10 @@
+# .21 MySQL Source — /etc/my.cnf.d/mysql-server.cnf 의 [mysqld] 에 추가
+[mysqld]
+bind-address             = 0.0.0.0
+default-time-zone        = '+09:00'
+character-set-server     = utf8mb4
+collation-server         = utf8mb4_0900_ai_ci
+server-id                = 1
+log-bin                  = mysql-bin
+gtid_mode                = ON
+enforce_gtid_consistency = ON

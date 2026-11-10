@@ -1,0 +1,6 @@
+# /etc/valkey/valkey.conf 에 추가 · 수정하는 값
+bind 0.0.0.0
+protected-mode yes
+requirepass <VALKEY_PASSWORD>
+maxmemory 256mb
+maxmemory-policy allkeys-lru     # 꽉 차면 오래 안 쓴 키부터 지움 (캐시 용도)

@@ -1,0 +1,9 @@
+# .25 (mongo-3) /etc/mongod.conf 중 복제 세트 관련 부분 — .22 · .24와 같은 값, bindIp만 다름
+net:
+  port: 27017
+  bindIp: 127.0.0.1,192.168.56.25
+replication:
+  replSetName: rs0
+security:
+  authorization: enabled
+  keyFile: <keyFile 경로>

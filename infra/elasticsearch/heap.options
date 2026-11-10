@@ -1,0 +1,3 @@
+# /etc/elasticsearch/jvm.options.d/heap.options — VM 메모리의 절반 이하
+-Xms1g
+-Xmx1g

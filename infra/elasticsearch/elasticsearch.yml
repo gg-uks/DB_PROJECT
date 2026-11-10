@@ -1,0 +1,6 @@
+cluster.name: playlog
+node.name: es-1
+network.host: 0.0.0.0
+http.port: 9200
+discovery.type: single-node
+xpack.security.enabled: false      # 내부망 전용 · 실습 환경이라 인증 끔
