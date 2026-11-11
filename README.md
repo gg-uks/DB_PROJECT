@@ -154,7 +154,7 @@ erDiagram
 | 프론트엔드 | React 19 · Vite 7 · Recharts 3 |
 | 백엔드 | Node.js 22 · Express 5 · node-cron |
 | 정형 DB | MySQL 8.4 — Source(쓰기) → Replica(읽기) GTID 복제 |
-| 비정형 DB | MongoDB — 복제 세트 3노드 (자동 장애 조치) |
+| 비정형 DB | MongoDB 8.0 — 복제 세트 3노드 P + S + S (자동 장애 조치) |
 | 검색 | Elasticsearch 9.5 + analysis-nori (한국어 형태소 분석) |
 | 캐시 | Valkey (Redis 호환) |
 | 메시징 | Apache Kafka 4.3 (KRaft) — 리뷰 수집 큐 · 파티션 2 |
@@ -166,9 +166,9 @@ erDiagram
 | 담당 | 맡은 부분 | 문서 |
 |---|---|---|
 | 김남국 | DB 설계 · HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
-| ✏️ (이름) | NAT 게이트웨이 · 네트워크 | 아래 [NAT](#-nat-게이트웨이) |
-| ✏️ (이름) | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | 아래 [MongoDB](#-mongodb-클러스터) |
-| ✏️ (이름) | 백업 서버 (.41) · 백업 전략 | 아래 [백업](#-백업-전략) |
+| 한예찬 | NAT 게이트웨이 · 네트워크 | 아래 [NAT](#-nat-게이트웨이) |
+| 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/MONGODB.md`](docs/MONGODB.md) |
+| 한예찬,김남국,황시영 | 백업 서버 (.41) · 모니터링 (.42) · 백업 전략 | 아래 [백업](#-백업-전략) |
 
 > [!IMPORTANT]
 > ✏️ **작성 필요 — 담당: 팀원**
@@ -192,14 +192,15 @@ flowchart LR
 
 | IP | 서버 | 역할 | 담당 |
 |---|---|---|---|
-| ✏️ 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | ✏️ |
+| 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | 한예찬 |
 | 192.168.56.10 | HAProxy | 부하 분산 (roundrobin) | 김남국 |
 | 192.168.56.11 · .12 | WEB1 · WEB2 | nginx · React · Node API · consumer (WEB1 + scheduler) | 김남국 |
 | 192.168.56.21 · .23 | MySQL | Source(쓰기) · Replica(읽기) | 김남국 |
-| 192.168.56.22 · .24 · .25 | MongoDB | 복제 세트 rs0 (3노드) | ✏️ |
+| 192.168.56.22 · .24 · .25 | MongoDB 8.0 | 복제 세트 rs0 (P + S + S · 3노드) | 한예찬 |
 | 192.168.56.31 | Kafka + Valkey | 리뷰 수집 큐 · 캐시 | 김남국 |
 | 192.168.56.33 | Elasticsearch | nori 형태소 분석 · 검색 | 김남국 |
 | 192.168.56.41 | 백업 서버 | 덤프 보관 | ✏️ |
+| 192.168.56.42 | 모니터링 | mongodb_exporter(9216) 수집 ·| 한예찬 |
 
 ---
 
@@ -209,8 +210,8 @@ flowchart LR
 > ✏️ **작성 필요 — 담당: (이름)**
 > 아래 항목을 채워 주세요.
 
-- **역할**: ✏️ (예: 외부 네트워크 → 내부 192.168.56.0/24 연결, 80번 포트를 HAProxy로 포워딩)
-- **네트워크 구성**: ✏️ (외부 인터페이스 · 내부 인터페이스 · IP)
+- **역할**: 황시영 (예: 외부 네트워크 → 내부 192.168.56.0/24 연결, 80번 포트를 HAProxy로 포워딩)
+- **네트워크 구성**: 황시영 (외부 인터페이스 · 내부 인터페이스 · IP)
 - **설정 방법**:
 ```bash
 # ✏️ 사용한 명령 (예: IP 포워딩 켜기 · firewalld masquerade · 포트 포워딩)
@@ -221,22 +222,53 @@ flowchart LR
 
 ## 🍃 MongoDB 클러스터
 
-> [!IMPORTANT]
-> ✏️ **작성 필요 — 담당: (이름)**
-> 아래 항목을 채워 주세요. .25 추가 절차는 [`docs/INFRA.md` 9절](docs/INFRA.md#9-db-클러스터--mongodb-복제-세트-3노드)에 정리돼 있습니다.
+> 상세 구성 기록: [`docs/MONGODB.md`](docs/MONGODB.md) — 설치 · keyFile · 방화벽 · 복제 세트 초기화 · mongo-3 추가 · 장애 조치 시험
 
-- **버전**: ✏️ MongoDB x.x
-- **구성**: 복제 세트 `rs0` — Primary .22 · Secondary .24 · Secondary .25 (✏️ 실제 구성 확인)
-- **인증**: ✏️ (keyFile 방식 · 관리자 계정 · 앱 계정 `playlog` = playlog DB readWrite)
-- **설정 파일** `/etc/mongod.conf`:
+- **버전**: MongoDB **8.0.34** · Rocky Linux 10.2 (7.0 공식 저장소는 RHEL 9까지만 있어 8.0 사용 · 3대 모두 같은 버전)
+- **구성**: 복제 세트 `rs0` — **P + S + S (데이터 노드 3대)**
+
+| 서버 | IP | 역할 | priority |
+|---|---|---|---|
+| mongo-1 | 192.168.56.22 | Primary | 2 |
+| mongo-2 | 192.168.56.24 | Secondary | 1 |
+| mongo-3 | 192.168.56.25 | Secondary (2026-11-10 추가) | 1 |
+
+- **왜 Arbiter가 아니라 데이터 노드 3대인가**
+
+| | P + S + Arbiter (이전 계획) | **P + S + S (적용)** |
+|---|---|---|
+| 데이터 사본 | 2개 | **3개** |
+| Primary 장애 | 자동 승격 (3표 중 2표) | 자동 승격 (3표 중 2표) |
+| Secondary 1대 장애 | `w: majority` 쓰기 멈춤 | **정상** (2대가 과반) |
+| 비용 | VM 추가 없음 | VM 1대 (1.5GB) |
+
+- **인증**: keyFile(`/etc/mongo-keyfile`, 멤버 간 인증 · `chmod 400` · SELinux `restorecon`) + 관리자 계정 `admin`(root) + 앱 전용 계정 `playlog`(playlog DB `readWrite`)
+- **설정 파일** `/etc/mongod.conf` (3대 동일 · `bindIp`만 각자 IP):
 ```yaml
-# ✏️ net · replication · security 부분
+storage:
+  dbPath: /var/lib/mongo
+net:
+  port: 27017
+  bindIp: 127.0.0.1,192.168.56.22     # mongo-2는 .24, mongo-3은 .25
+security:
+  keyFile: /etc/mongo-keyfile
+replication:
+  replSetName: rs0
 ```
-- **복제 세트 만들기**:
+- **방화벽**: 27017은 Mongo 멤버(.22 · .24 · .25) · WEB(.11 · .12) · 백업(.41)에서만 · 9216(mongodb_exporter)은 모니터링(.42)에서만
+- **복제 세트 만들기** (mongo-1):
 ```js
-// ✏️ rs.initiate(...) · rs.add(...) 에 쓴 명령
+rs.initiate({ _id: "rs0", members: [
+  { _id: 0, host: "192.168.56.22:27017", priority: 2 },
+  { _id: 1, host: "192.168.56.24:27017", priority: 1 } ] })
+rs.add({ host: "192.168.56.25:27017", priority: 1 })      // mongo-3 추가
+rs.status().members.map(m => [m.name, m.stateStr])        // PRIMARY 1 · SECONDARY 2
 ```
-- **장애 조치 시험 결과**: ✏️ (Primary를 멈췄을 때 새 Primary가 뽑히기까지 걸린 시간 · 화면 확인)
+- **시험 결과 (2026-11-10)**
+  - 복제: mongo-1에 쓴 문서를 mongo-3에서 조회 ✅ (테스트 전용 DB `repl_check` 사용 후 삭제)
+  - 자동 승격: mongo-1 정지 → mongo-2가 PRIMARY → mongo-1 복귀 시 priority 2라 다시 PRIMARY ✅
+  - 데이터: `playlog` DB — `game_raw` 30 · `review_text` 7,493 (MySQL `REVIEW`와 같은 수) ✅
+- **앱 연결** (WEB1 · WEB2 `.env`): `mongodb://playlog:<비밀번호>@192.168.56.22:27017,192.168.56.24:27017,192.168.56.25:27017/?replicaSet=rs0&authSource=playlog`
 - **컬렉션**: `review_text`(리뷰 원문) · `game_raw`(Steam 원본 JSON) — 쿼리는 [`docs/QUERIES.md` 2절](docs/QUERIES.md#2-mongodb-playlog-db--mongosh)
 
 ---
@@ -269,6 +301,7 @@ flowchart LR
 
 | 문서 | 내용 |
 |---|---|
+| [`docs/MONGODB.md`](docs/MONGODB.md) | MongoDB 복제 세트 3노드 구성 기록 (설치 · 인증 · mongo-3 추가 · 장애 조치 시험) |
 | [`docs/INFRA.md`](docs/INFRA.md) | 서버 구성 · 설치 순서 체크리스트 · 서버별 설정 · 겪은 문제와 해결 |
 | [`docs/QUERIES.md`](docs/QUERIES.md) | 쿼리 전체 (SQL 34개 목록 · MongoDB · Elasticsearch · Redis · Kafka · EXPLAIN 측정) |
 | [`backend/db/ALL_QUERIES.sql`](backend/db/ALL_QUERIES.sql) | 코드에서 쓰는 SQL 원문 + 설명 (Workbench에서 바로 실행) |
