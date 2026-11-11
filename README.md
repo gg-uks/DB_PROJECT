@@ -192,7 +192,8 @@ flowchart LR
 
 | IP | 서버 | 역할 | 담당 |
 |---|---|---|---|
-| 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | 한예찬 |
+| 인프라 세팅       | 황시영 |
+| 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | 황시영 |
 | 192.168.56.10 | HAProxy | 부하 분산 (roundrobin) | 김남국 |
 | 192.168.56.11 · .12 | WEB1 · WEB2 | nginx · React · Node API · consumer (WEB1 + scheduler) | 김남국 |
 | 192.168.56.21 · .23 | MySQL | Source(쓰기) · Replica(읽기) | 김남국 |
