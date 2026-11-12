@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/34723989/README.md)
 # PLAYLOG — 스팀 한국어 리뷰 키워드 분석 플랫폼
 
 > DB 프로젝트 · 팀원 김남국 · 한예찬 · 황시영
@@ -158,17 +159,20 @@ erDiagram
 | 검색 | Elasticsearch 9.5 + analysis-nori (한국어 형태소 분석) |
 | 캐시 | Valkey (Redis 호환) |
 | 메시징 | Apache Kafka 4.3 (KRaft) — 리뷰 수집 큐 · 파티션 2 |
-| 인프라 | Rocky Linux 10 VM · HAProxy · nginx · pm2 |
+| 인프라 | Rocky Linux 10 VM 13대 · HAProxy · nginx · pm2 |
+| 모니터링 | Prometheus · Alertmanager(→ Slack) · Grafana 13 · exporter (node · mysqld · mongodb · haproxy · redis · kafka · elasticsearch) |
+| 백업 | mysqldump · mongodump (매일) · binlog 실시간 전송 (증분 · PITR) · 월 1회 오프라인 백업 · GFS 보관 계층 |
 | 데이터 출처 | Steam 공식 Web API (GetMostPlayedGames · appdetails · GetAppReviews) |
 
 ## 👥 역할 분담
 
 | 담당 | 맡은 부분 | 문서 |
 |---|---|---|
+| 김남국,한예찬,황시영 | DB설계 |---|
 | 김남국 | DB 설계 · HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
 | 한예찬 | NAT 게이트웨이 · 네트워크 | 아래 [NAT](#-nat-게이트웨이) |
 | 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/MONGODB.md`](docs/MONGODB.md) |
-| 한예찬,김남국,황시영 | 백업 서버 (.41) · 모니터링 (.42) · 백업 전략 | 아래 [백업](#-백업-전략) |
+| 한예찬 · 김남국 · 황시영 | 백업 서버 (.41) · 모니터링 (.42) · 백업 전략 | [`docs/BACKUP.md`](docs/BACKUP.md) · [`docs/MONITORING.md`](docs/MONITORING.md) |
 
 > [!IMPORTANT]
 > ✏️ **작성 필요 — 담당: 팀원**
@@ -179,29 +183,62 @@ erDiagram
 ```mermaid
 flowchart LR
   U[사용자] --> NAT[NAT GW] --> HA[HAProxy .10]
-  HA --> W1[WEB1 .11<br/>nginx · React · API<br/>consumer · scheduler]
+  HA --> W1["WEB1 .11<br/>nginx · React · API<br/>consumer · scheduler(Producer)"]
   HA --> W2[WEB2 .12<br/>nginx · React · API<br/>consumer]
   W1 & W2 -->|쓰기| MS[(MySQL Source .21)]
   W1 & W2 -->|읽기| MR[(MySQL Replica .23)]
   MS -. 복제 .-> MR
-  W1 & W2 --> MG[(MongoDB rs0<br/>.22 · .24 · .25)]
+  W1 & W2 -->|쓰기| MP[(Mongo Primary .22)]
+  W1 & W2 -->|읽기| MSE[(Mongo Secondary<br/>.24 · .25)]
+  MP -. 복제 .-> MSE
   W1 & W2 --> K[Kafka + Valkey .31]
   W1 & W2 --> ES[Elasticsearch .33]
-  MS & MG -. 백업 .-> BK[(백업 서버 .41)]
+  MS -. binlog 실시간 .-> BK[(backup .41)]
+  MR & MSE -. 덤프 · 월 1회 오프라인 .-> BK
+  MON[monitor .42<br/>Prometheus · Grafana] -. 수집 .-> W1 & MS & MP & BK
+  MON -. 알림 .-> SL[Slack]
 ```
 
-| IP | 서버 | 역할 | 담당 |
+| IP | 호스트 | 역할 | 담당 |
 |---|---|---|---|
-| 인프라 세팅 |   |      | 황시영 |
-| 192.168.0.224 | NAT GW | 외부 접속 → HAProxy 포워딩 | 황시영 |
-| 192.168.56.10 | HAProxy | 부하 분산 (roundrobin) | 김남국 |
-| 192.168.56.11 · .12 | WEB1 · WEB2 | nginx · React · Node API · consumer (WEB1 + scheduler) | 김남국 |
-| 192.168.56.21 · .23 | MySQL | Source(쓰기) · Replica(읽기) | 김남국 |
-| 192.168.56.22 · .24 · .25 | MongoDB 8.0 | 복제 세트 rs0 (P + S + S · 3노드) | 한예찬 |
-| 192.168.56.31 | Kafka + Valkey | 리뷰 수집 큐 · 캐시 | 김남국 |
-| 192.168.56.33 | Elasticsearch | nori 형태소 분석 · 검색 | 김남국 |
-| 192.168.56.41 | 백업 서버 | 덤프 보관 | ✏️ |
-| 192.168.56.42 | 모니터링 | mongodb_exporter(9216) 수집 ·| 한예찬 |
+| — | 인프라 세팅 | VM 템플릿 · 네트워크 | 황시영 |
+| 192.168.0.224 | NAT GW | 외부 접속 → 내부망 연결 · HAProxy 포워딩 | 황시영 |
+| 192.168.56.10 | lb | HAProxy (roundrobin) | 김남국 |
+| 192.168.56.11 | web1 | nginx · React · Node.js API · consumer · **scheduler(Producer)** | 김남국 |
+| 192.168.56.12 | web2 | nginx · React · Node.js API · consumer | 김남국 |
+| 192.168.56.21 | mysql-s | MySQL Source (쓰기) | 김남국 |
+| 192.168.56.23 | mysql-r | MySQL Replica (읽기) | 김남국 |
+| 192.168.56.22 | mongo-1 | MongoDB Primary (쓰기) | 한예찬 |
+| 192.168.56.24 | mongo-2 | MongoDB Secondary (읽기) | 한예찬 |
+| 192.168.56.25 | mongo-3 | MongoDB Secondary (읽기) | 한예찬 |
+| 192.168.56.31 | mw | Kafka · Redis(Valkey) | 김남국 |
+| 192.168.56.33 | es | Elasticsearch · Kibana | 김남국 |
+| 192.168.56.41 | backup | 백업 보관 · binlog 실시간 수신 · 복원 테스트 | 한예찬 · 김남국 · 황시영 |
+| 192.168.56.42 | monitor | Prometheus · Alertmanager · Grafana | 한예찬 |
+
+- **읽기 / 쓰기 분리**
+  - MySQL: 쓰기 → Source(.21) · 읽기 → Replica(.23) (앱의 `writePool` / `readPool`)
+  - MongoDB: 쓰기 → Primary(.22) · 읽기 → Secondary(.24 · .25) (`readPreference=secondaryPreferred` · Secondary가 모두 꺼지면 Primary에서 읽음)
+- **Producer / Consumer**: Producer는 web1 scheduler가 매일 03:00에 실행하고 끝나는 작업 (`steam-reviews.mjs produce`) · consumer는 web1 · web2에 상시 실행 (파티션 2개를 하나씩)
+- **서버별 실제 설정 파일**: [`infra/vm/<호스트>/`](infra/vm/) — 13대에서 수집 (비밀번호는 `<MASKED>`)
+
+`/etc/hosts` (모든 VM 공통)
+
+```text
+192.168.56.10   lb        # HAProxy
+192.168.56.11   web1      # Node.js · Producer(scheduler) · consumer
+192.168.56.12   web2      # Node.js · consumer
+192.168.56.21   mysql-s   # MySQL Source · 쓰기
+192.168.56.23   mysql-r   # MySQL Replica · 읽기
+192.168.56.22   mongo-1   # MongoDB Primary
+192.168.56.24   mongo-2   # MongoDB Secondary
+192.168.56.25   mongo-3   # MongoDB Secondary
+192.168.56.31   mw        # Kafka · Redis(Valkey)
+192.168.56.33   es        # Elasticsearch · Kibana
+192.168.56.41   backup    # 백업 보관 · binlog 수신
+192.168.56.42   monitor   # Prometheus · Grafana
+# NAT GW: 외부 192.168.0.224
+```
 
 ---
 
@@ -269,26 +306,94 @@ rs.status().members.map(m => [m.name, m.stateStr])        // PRIMARY 1 · SECOND
   - 복제: mongo-1에 쓴 문서를 mongo-3에서 조회 ✅ (테스트 전용 DB `repl_check` 사용 후 삭제)
   - 자동 승격: mongo-1 정지 → mongo-2가 PRIMARY → mongo-1 복귀 시 priority 2라 다시 PRIMARY ✅
   - 데이터: `playlog` DB — `game_raw` 30 · `review_text` 7,493 (MySQL `REVIEW`와 같은 수) ✅
-- **앱 연결** (WEB1 · WEB2 `.env`): `mongodb://playlog:<비밀번호>@192.168.56.22:27017,192.168.56.24:27017,192.168.56.25:27017/?replicaSet=rs0&authSource=playlog`
+- **앱 연결** (WEB1 · WEB2 `.env`): `mongodb://playlog:<비밀번호>@192.168.56.22:27017,192.168.56.24:27017,192.168.56.25:27017/?replicaSet=rs0&authSource=playlog&readPreference=secondaryPreferred`
+  - 읽기는 Secondary(.24 · .25), 쓰기는 Primary(.22) — 2026-11-12 적용, WEB1 · WEB2에서 `explain()`으로 mongo-2 · mongo-3 읽기 확인
+- **모니터링**: mongodb_exporter(9216) 3대 · `MongoDown` · `MongoNoPrimary` 알림 ([`docs/MONITORING.md`](docs/MONITORING.md))
 - **컬렉션**: `review_text`(리뷰 원문) · `game_raw`(Steam 원본 JSON) — 쿼리는 [`docs/QUERIES.md` 2절](docs/QUERIES.md#2-mongodb-playlog-db--mongosh)
 
 ---
 
 ## 💾 백업 전략
 
-> [!IMPORTANT]
-> ✏️ **작성 필요 — 담당: (이름)**
-> 아래 항목을 채워 주세요. 현재 복제(이중화)는 구성 완료, 백업은 계획 단계입니다.
+> 상세 작업 기록 · 스크립트 전체: [`docs/BACKUP.md`](docs/BACKUP.md) (v2, 2026-11-11) · 실제 cron: [`infra/vm/backup/etc/cron.d/`](infra/vm/backup/etc/cron.d/)
 
-- **이중화 vs 백업**: 복제는 서버 장애 대비(지금 상태의 사본) · 백업은 실수로 지운 데이터를 과거 시점으로 복구
-- **대상**: 반드시 — `MEMBER` · `WISHLIST` (다시 만들 수 없음) / 재수집 가능 — 게임 · 리뷰 · 키워드 · ES
-- **방법** (✏️ 실제 적용한 내용으로):
-```bash
-# ✏️ MySQL: mysqldump --single-transaction (Replica .23에서) → .41
-# ✏️ MongoDB: mongodump --gzip (Secondary에서) → .41
-# ✏️ cron 일정 · 보관 기간 (예: 매일 05:30 · 7일)
+- **이중화 vs 백업**: 복제(MySQL Source→Replica · MongoDB rs0)는 서버 장애 대비 · 백업은 실수 삭제 · 잘못된 배포를 **과거 시점으로 복구**
+- **백업 서버**: backup **.41** — 백업은 서비스 DB가 아니라 **Replica · Secondary**에서 받아 서비스에 부하 · 중단 없음
+
+### 무엇을 어떻게 (전체 / 증분 · 온라인 / 오프라인)
+
+| 기준 | 방식 |
+|---|---|
+| 전체 | 매일 MySQL `mysqldump --single-transaction` · MongoDB `mongodump` · Grafana DB |
+| 증분 | MySQL **binlog 실시간 전송** (`mysqlbinlog --read-from-remote-server --stop-never`) → 시점 복구(PITR) |
+| 온라인 (Hot) | 매일 백업 · binlog — 서비스를 켠 채로 |
+| 오프라인 (Cold) | **월 1회** mongo-3 · mysql-replica만 몇 초 정지 → 데이터 폴더 통째로 (mongo 17초 · mysql 8초) |
+| 다른 장비 사본 (3-2-1) | 주 1회 호스트 PC `D:\playlog_backup` |
+
+### 일정
+
+| 주기 | 시각 | 서버 | 작업 |
+|---|---|---|---|
+| 상시 | — | .41 | `mysql-binlog-stream` — Source binlog 실시간 수신 (증분) |
+| 5분마다 | — | .41 | `binlog_metrics.sh` — 전송 상태 지표 |
+| 매일 | 04:00 / 04:10 / 04:30 | .41 | MySQL / MongoDB / Grafana 전체 백업 |
+| 매일 | 05:00 | .41 | `backup_rotate.sh` — GFS 승격 · 정리 + 오래된 binlog 정리 |
+| 매월 1일 | 05:00 | .25 · .23 | `cold_backup.sh` — 오프라인 백업 (알림 15분 자동 묵음) |
+| 매월 1일 | 05:20 | .41 | `cold_pull.sh` — 오프라인 백업 가져오기 (전용 키 · 강제 명령) |
+| 매월 1일 | 05:30 | .41 | `restore_test.sh` — 복원 테스트 + PITR 검사 |
+| 매주 | 수동 | 호스트 PC | archive · cold 복사 |
+
+### 보관 계층 (GFS)
+
+| 일 | 주 | 월 | 분기 | 반기 | 연 |
+|---|---|---|---|---|---|
+| 7 | 4 | 12 | 4 🔒 | 2 🔒 | 3 🔒 |
+
+- 일요일 → 주, 매월 1일 → 월, 1 · 4 · 7 · 10월 → 분기, 1 · 7월 → 반기, 1월 → 연
+- 주 · 월은 **하드링크** (공간 거의 0) · 분기 이상은 **AES-256 암호화 → 복호화 비교 검증 후 저장** (키는 비밀번호 관리자에 보관, GitHub 금지)
+
+### 복구 목표 (RPO)
+
+| 데이터 | 다시 만들 수 있나 | RPO |
+|---|---|---|
+| 회원 · 찜 (`MEMBER` · `WISHLIST`) | ❌ | **거의 0** (binlog 시점 복구) |
+| 게임 · 리뷰 (MySQL) · 리뷰 원문 (MongoDB) | ⭕ Steam API 재수집 | 1일 |
+| Elasticsearch · Redis | ⭕ 재색인 · 캐시 | 백업 안 함 |
+
+### 검증
+
+- **PITR 리허설** (2026-11-11): 테스트 회원 INSERT → DELETE(사고) → 덤프 + binlog(사고 직전까지) 적용 → 회원 **부활** 확인
+- **월간 복원 테스트**: `OK … tables=15 reviews=7493 pitr=member:3/3,review:7493/7493 | mongo … docs=7523`
+- 복원 작업은 `sql_log_bin=0` · `--disable-log-bin`으로 binlog에 남기지 않음 → Replica로 복제 안 되고 다음 PITR에 안 섞임
+- 절차: [`docs/BACKUP.md` 4장 (PITR)](docs/BACKUP.md#4-시점-복구-pitr-절차) · [5장 (오프라인 복원)](docs/BACKUP.md#5-오프라인-백업-복원-절차)
+
+---
+
+## 📈 모니터링
+
+> 상세 작업 기록: [`docs/MONITORING.md`](docs/MONITORING.md) · 실제 설정: [`infra/vm/monitor/`](infra/vm/monitor/)
+
 ```
-- **복구 시험**: ✏️ (테스트 DB에 복원 → 테이블별 행 수 비교 결과)
+[각 서버 exporter] ──scrape(15s)──▶ Prometheus(.42:9090) ──▶ Alertmanager(.42:9093) ──▶ Slack
+ backup .41 textfile (백업 · binlog · cold 지표)    └──▶ Grafana(.42:3000) ◀── MySQL datasource(.23)
+```
+
+| 수집 대상 (job) | 대상 | 포트 |
+|---|---|---|
+| node | 13대 전부 | 9100 |
+| mysql | mysql-source · mysql-replica | 9104 |
+| mongodb | mongo-1 · 2 · 3 | 9216 |
+| haproxy | lb (내장 exporter) | 8404 |
+| redis · kafka | mw | 9121 · 9308 |
+| elasticsearch | es | 9114 |
+
+- **알림 17개** → Slack (`[발생]` / `[해결]`)
+  - 서버 · DB: InstanceDown · HighMemory · MySQLReplicationStopped · MySQLReplicationLag · MongoDown · MongoNoPrimary · DiskUsageHigh
+  - 백업: BackupMissing · BackupSizeDropped · RestoreTestOverdue · BinlogStreamDown · ColdBackupMissing · BackupRotateMissing
+  - 미들웨어: WebBackendDown · RedisDown · ElasticsearchRed · KafkaConsumerLag
+- **Grafana 대시보드 "playlog 운영" v5** — 한눈에 보기 · 백업 · 복원 · DB 복제 · 웹 · 미들웨어 · 데이터 수집 (MySQL 쿼리 패널)
+- **접속**: 방화벽은 SSH만 허용 → `ssh -J root@192.168.0.224 -L 3000:127.0.0.1:3000 root@192.168.56.42` 후 http://localhost:3000
+- 오프라인 백업 때 의도된 정지는 각 서버 스크립트가 **Alertmanager에 15분 묵음**을 직접 등록
 
 ---
 
@@ -303,6 +408,8 @@ rs.status().members.map(m => [m.name, m.stateStr])        // PRIMARY 1 · SECOND
 | 문서 | 내용 |
 |---|---|
 | [`docs/MONGODB.md`](docs/MONGODB.md) | MongoDB 복제 세트 3노드 구성 기록 (설치 · 인증 · mongo-3 추가 · 장애 조치 시험) |
+| [`docs/BACKUP.md`](docs/BACKUP.md) | 백업 전략 v2 — GFS · binlog 실시간 전송 · PITR · 오프라인 백업 · 스크립트 전체 |
+| [`docs/MONITORING.md`](docs/MONITORING.md) | 모니터링 구축 기록 — Prometheus · exporter · 알림 17개 · Slack · Grafana 대시보드 |
 | [`docs/INFRA.md`](docs/INFRA.md) | 서버 구성 · 설치 순서 체크리스트 · 서버별 설정 · 겪은 문제와 해결 |
 | [`docs/QUERIES.md`](docs/QUERIES.md) | 쿼리 전체 (SQL 34개 목록 · MongoDB · Elasticsearch · Redis · Kafka · EXPLAIN 측정) |
 | [`backend/db/ALL_QUERIES.sql`](backend/db/ALL_QUERIES.sql) | 코드에서 쓰는 SQL 원문 + 설명 (Workbench에서 바로 실행) |
@@ -310,6 +417,7 @@ rs.status().members.map(m => [m.name, m.stateStr])        // PRIMARY 1 · SECOND
 | [`backend/db/erdcloud.sql`](backend/db/erdcloud.sql) | ERDCloud 가져오기용 DDL |
 | [`backend/db/perf/`](backend/db/perf/README.md) | 인덱스 · 쿼리 수정 성능 측정 스크립트 |
 | [`infra/`](infra/README.md) | 서버별 설정 파일 (HAProxy · nginx · pm2 · MySQL · MongoDB · Kafka · ES · Valkey) |
+| [`infra/vm/`](infra/vm/) | VM 13대에서 수집한 실제 설정 파일 (비밀번호 마스킹) |
 
 ## ▶️ 로컬 실행
 
