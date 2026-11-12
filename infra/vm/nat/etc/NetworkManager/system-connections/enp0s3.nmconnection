@@ -1,0 +1,17 @@
+[connection]
+id=enp0s3
+uuid=701d3e58-b1c9-4dea-814a-05f972f11dd3
+type=ethernet
+interface-name=enp0s3
+zone=external
+
+[ethernet]
+
+[ipv4]
+method=auto
+
+[ipv6]
+addr-gen-mode=default
+method=auto
+
+[proxy]

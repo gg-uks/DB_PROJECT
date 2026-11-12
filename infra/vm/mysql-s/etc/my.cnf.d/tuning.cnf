@@ -1,0 +1,6 @@
+[mysqld]
+innodb_buffer_pool_size = 256M
+slow_query_log = ON
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 1
+log_slow_admin_statements = ON
