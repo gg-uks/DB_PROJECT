@@ -1,0 +1,24 @@
+groups:
+  - name: basic
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} down"
+      - alert: HighMemory
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} memory over 90%"
+      - alert: MySQLReplicationStopped
+        expr: mysql_slave_status_replica_io_running == 0 or mysql_slave_status_replica_sql_running == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} replication stopped"

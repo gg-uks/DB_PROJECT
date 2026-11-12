@@ -1,0 +1,29 @@
+#
+# This group are read by MySQL server.
+# Use it for options that only the server (but not clients) should see
+#
+# For advice on how to change settings please see
+# http://dev.mysql.com/doc/refman/en/server-configuration-defaults.html
+
+# Settings user and group are ignored when systemd is used.
+# If you need to run mysqld under a different user or group,
+# customize your systemd unit file for mysqld according to the
+# instructions in http://fedoraproject.org/wiki/Systemd
+
+[mysqld]
+datadir=/var/lib/mysql
+socket=/var/lib/mysql/mysql.sock
+log-error=/var/log/mysql/mysqld.log
+pid-file=/run/mysqld/mysqld.pid
+
+bind-address = 0.0.0.0
+default-time-zone = '+09:00'
+character-set-server = utf8mb4
+collation-server = utf8mb4_0900_ai_ci
+
+server-id = 2
+log-bin = mysql-bin
+relay-log = relay-bin
+gtid_mode = ON
+enforce_gtid_consistency = ON
+read_only = ON

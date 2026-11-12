@@ -1,0 +1,13 @@
+[Unit]
+Description=Apache Kafka (KRaft)
+After=network.target
+
+[Service]
+User=kafka
+Environment="KAFKA_HEAP_OPTS=-Xms512m -Xmx512m"
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

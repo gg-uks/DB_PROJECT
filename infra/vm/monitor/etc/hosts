@@ -1,0 +1,20 @@
+# Loopback entries; do not change.
+# For historical reasons, localhost precedes localhost.localdomain:
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+# See hosts(5) for proper format and other examples:
+# 192.168.1.10 foo.example.org foo
+# 192.168.1.13 bar.example.org bar
+192.168.56.2  nat-gw
+192.168.56.10 lb-server
+192.168.56.11 web-app-1
+192.168.56.12 web-app-2
+192.168.56.21 mysql-source
+192.168.56.22 mongo-1
+192.168.56.23 mysql-replica
+192.168.56.24 mongo-2
+192.168.56.31 mw
+192.168.56.33 es
+192.168.56.41 backup
+192.168.56.42 monitor mon
+192.168.56.25 mongo-3

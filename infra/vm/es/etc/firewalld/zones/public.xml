@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For use in public areas. You do not trust the other computers on networks to not harm your computer. Only selected incoming connections are accepted.</description>
+  <service name="ssh"/>
+  <service name="dhcpv6-client"/>
+  <service name="cockpit"/>
+  <port port="9200" protocol="tcp"/>
+  <port port="5601" protocol="tcp"/>
+  <port port="9100" protocol="tcp"/>
+  <rule family="ipv4">
+    <source address="192.168.56.42"/>
+    <port port="9114" protocol="tcp"/>
+    <accept/>
+  </rule>
+  <forward/>
+</zone>

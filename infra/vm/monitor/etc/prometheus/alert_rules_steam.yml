@@ -1,0 +1,99 @@
+groups:
+  - name: steam-db
+    rules:
+      - alert: MongoDown
+        expr: mongodb_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} mongod 응답 없음 (나머지 2대로 서비스 유지 중인지 확인)"
+
+      - alert: MongoNoPrimary
+        expr: absent(mongodb_rs_members_state == 1)
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "MongoDB rs0에 PRIMARY 없음 (자동 승격 실패)"
+
+      - alert: MySQLReplicationLag
+        expr: mysql_slave_status_seconds_behind_source > 30
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} MySQL 복제 지연 {{ $value }}초"
+
+      - alert: DiskUsageHigh
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"}) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} {{ $labels.mountpoint }} 디스크 {{ $value | humanizePercentage }}"
+
+  - name: backup
+    rules:
+      - alert: BackupMissing
+        expr: time() - backup_last_success_timestamp_seconds > 26 * 3600
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.target }} 백업 26시간 넘게 성공 기록 없음"
+
+      - alert: BackupSizeDropped
+        expr: backup_size_bytes < 0.5 * (backup_size_bytes offset 1d)
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.target }} 백업 크기가 전날의 절반 미만 (데이터 삭제 의심)"
+
+      - alert: RestoreTestOverdue
+        expr: time() - restore_test_last_success_timestamp_seconds > 35 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "복원 테스트 35일 넘게 성공 기록 없음"
+
+      - alert: BinlogStreamDown
+        expr: backup_binlog_stream_up == 0 or time() - node_textfile_mtime_seconds{file=~".*backup_binlog.prom"} > 900
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "MySQL binlog 실시간 전송 10분 넘게 중단 (이 구간은 시점 복구 불가)"
+
+      - alert: ColdBackupMissing
+        expr: time() - backup_cold_last_success_timestamp_seconds > 35 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.target }} 오프라인 백업 35일 넘게 성공 기록 없음"
+
+      - alert: BackupRotateMissing
+        expr: time() - backup_rotate_last_success_timestamp_seconds > 26 * 3600
+        labels: { severity: warning }
+        annotations:
+          summary: "백업 보관 계층(GFS) 정리 26시간 넘게 성공 기록 없음"
+
+  - name: middleware
+    rules:
+      - alert: WebBackendDown
+        expr: haproxy_backend_active_servers{proxy="web_servers"} < 2
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "HAProxy에서 살아 있는 WEB {{ $value }}대 (2대 중)"
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Valkey(Redis) 응답 없음 — 로그인 · 캐시 영향"
+
+      - alert: ElasticsearchRed
+        expr: elasticsearch_cluster_health_status{color="red"} == 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Elasticsearch 클러스터 RED — 리뷰 검색 불가"
+
+      - alert: KafkaConsumerLag
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Kafka {{ $labels.consumergroup }}/{{ $labels.topic }} 적재 밀림 {{ $value }}건 (10분 지속)"

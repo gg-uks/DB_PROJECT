@@ -1,0 +1,1 @@
+30 5 1 * * root /usr/local/bin/restore_test.sh

@@ -1,0 +1,1 @@
+*/5 * * * * root /usr/local/bin/binlog_metrics.sh > /dev/null 2>&1
