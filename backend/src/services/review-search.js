@@ -125,7 +125,7 @@ export async function indexReviews(reviews) {
         JSON.stringify({ index: { _id: String(id) } }),
         JSON.stringify({ gameId, text, keywords, recommended }),
       ]).join("\n") + "\n";
-    const result = await elasticRequest(`/${index}/_bulk?refresh=wait_for`, {
+    const result = await elasticRequest(`/${index}/_bulk?refresh=false`, {
       body,
       ndjson: true,
     });
