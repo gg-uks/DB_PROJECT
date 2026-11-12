@@ -1,10 +1,8 @@
-[README.md](https://github.com/user-attachments/files/34723989/README.md)
+[README.md](https://github.com/user-attachments/files/34724391/README.md)
 # PLAYLOG — 스팀 한국어 리뷰 키워드 분석 플랫폼
 
 > DB 프로젝트 · 팀원 김남국 · 한예찬 · 황시영
 > 스팀 한국어 리뷰를 모아, 유저들이 각 게임을 어떤 단어로 이야기하는지 보여 주는 서비스
-
-> 📝 이 문서에서 `✏️ 작성 필요` 상자가 있는 곳은 담당 팀원이 내용을 채울 자리입니다. 채운 뒤 상자(`> [!IMPORTANT]` 블록)는 지웁니다.
 
 ## 📐 DB 설계 (ERD)
 
@@ -168,15 +166,12 @@ erDiagram
 
 | 담당 | 맡은 부분 | 문서 |
 |---|---|---|
-| 김남국,한예찬,황시영 | DB설계 |---|
-| 김남국 | DB 설계 · HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
-| 한예찬 | NAT 게이트웨이 · 네트워크 | 아래 [NAT](#-nat-게이트웨이) |
-| 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/MONGODB.md`](docs/MONGODB.md) |
+| 김남국 · 한예찬 · 황시영 | DB 설계 (요구사항 · ERD · 정규화) | 위 [ERD](#-db-설계-erd) |
+| 김남국 | HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
+| 황시영 | 인프라 세팅 · NAT 게이트웨이 · 네트워크 | [`docs/NAT.md`](docs/NAT.md) |
+| 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/NAT.md`](docs/NAT.md) | NAT 게이트웨이 설정 순서 (랜카드 3개 · 마스커레이드 · 포트포워딩 · 내부 서버 기본 경로) · 접속 포트 표 · 문제 해결 |
+| [`docs/MONGODB.md`](docs/MONGODB.md) |
 | 한예찬 · 김남국 · 황시영 | 백업 서버 (.41) · 모니터링 (.42) · 백업 전략 | [`docs/BACKUP.md`](docs/BACKUP.md) · [`docs/MONITORING.md`](docs/MONITORING.md) |
-
-> [!IMPORTANT]
-> ✏️ **작성 필요 — 담당: 팀원**
-> 담당자 이름과 맡은 부분이 다르면 위 표를 고쳐 주세요.
 
 ## 🗺️ 아키텍처
 
@@ -201,13 +196,12 @@ flowchart LR
 
 | IP | 호스트 | 역할 | 담당 |
 |---|---|---|---|
-| — | 인프라 세팅 | VM 템플릿 · 네트워크 | 황시영 |
-| 192.168.0.224 | NAT GW | 외부 접속 → 내부망 연결 · HAProxy 포워딩 | 황시영 |
-| 192.168.56.10 | lb | HAProxy (roundrobin) | 김남국 |
-| 192.168.56.11 | web1 | nginx · React · Node.js API · consumer · **scheduler(Producer)** | 김남국 |
-| 192.168.56.12 | web2 | nginx · React · Node.js API · consumer | 김남국 |
-| 192.168.56.21 | mysql-s | MySQL Source (쓰기) | 김남국 |
-| 192.168.56.23 | mysql-r | MySQL Replica (읽기) | 김남국 |
+| 192.168.0.224 (외부) · 192.168.56.2 (내부) | nat-gw | 인터넷 출구 (masquerade) · 강의실 PC 접속 입구 (포트포워딩) | 황시영 |
+| 192.168.56.10 | lb-server | HAProxy (roundrobin) | 김남국 |
+| 192.168.56.11 | web-app-1 | nginx · React · Node.js API · consumer · **scheduler(Producer)** | 김남국 |
+| 192.168.56.12 | web-app-2 | nginx · React · Node.js API · consumer | 김남국 |
+| 192.168.56.21 | mysql-source | MySQL Source (쓰기) | 김남국 |
+| 192.168.56.23 | mysql-replica | MySQL Replica (읽기) | 김남국 |
 | 192.168.56.22 | mongo-1 | MongoDB Primary (쓰기) | 한예찬 |
 | 192.168.56.24 | mongo-2 | MongoDB Secondary (읽기) | 한예찬 |
 | 192.168.56.25 | mongo-3 | MongoDB Secondary (읽기) | 한예찬 |
@@ -225,36 +219,76 @@ flowchart LR
 `/etc/hosts` (모든 VM 공통)
 
 ```text
-192.168.56.10   lb        # HAProxy
-192.168.56.11   web1      # Node.js · Producer(scheduler) · consumer
-192.168.56.12   web2      # Node.js · consumer
-192.168.56.21   mysql-s   # MySQL Source · 쓰기
-192.168.56.23   mysql-r   # MySQL Replica · 읽기
-192.168.56.22   mongo-1   # MongoDB Primary
-192.168.56.24   mongo-2   # MongoDB Secondary
-192.168.56.25   mongo-3   # MongoDB Secondary
-192.168.56.31   mw        # Kafka · Redis(Valkey)
-192.168.56.33   es        # Elasticsearch · Kibana
-192.168.56.41   backup    # 백업 보관 · binlog 수신
-192.168.56.42   monitor   # Prometheus · Grafana
-# NAT GW: 외부 192.168.0.224
+192.168.56.2    nat-gw          # NAT 게이트웨이 (외부 192.168.0.224)
+192.168.56.10   lb-server       # HAProxy
+192.168.56.11   web-app-1       # Node.js · Producer(scheduler) · consumer
+192.168.56.12   web-app-2       # Node.js · consumer
+192.168.56.21   mysql-source    # MySQL Source · 쓰기
+192.168.56.23   mysql-replica   # MySQL Replica · 읽기
+192.168.56.22   mongo-1         # MongoDB Primary
+192.168.56.24   mongo-2         # MongoDB Secondary
+192.168.56.25   mongo-3         # MongoDB Secondary
+192.168.56.31   mw              # Kafka · Redis(Valkey)
+192.168.56.33   es              # Elasticsearch · Kibana
+192.168.56.41   backup          # 백업 보관 · binlog 수신
+192.168.56.42   monitor         # Prometheus · Alertmanager · Grafana
 ```
 
 ---
 
 ## 🌐 NAT 게이트웨이
 
-> [!IMPORTANT]
-> ✏️ **작성 필요 — 담당: (이름)**
-> 아래 항목을 채워 주세요.
+> 상세 설정 순서 · 확인 · 문제 해결: [`docs/NAT.md`](docs/NAT.md) (담당 황시영) · 실제 설정: [`infra/vm/nat/`](infra/vm/nat/)
 
-- **역할**: 황시영 (예: 외부 네트워크 → 내부 192.168.56.0/24 연결, 80번 포트를 HAProxy로 포워딩)
-- **네트워크 구성**: 황시영 (외부 인터페이스 · 내부 인터페이스 · IP)
-- **설정 방법**:
+![NAT 구조](docs/images/nat.png)
+
+nat-gw 한 대가 **내부 서버들의 인터넷 출구**이자 **강의실 PC의 접속 입구**입니다. 내부 서버 → 인터넷은 enp0s8 → enp0s3, 강의실 PC → 내부 서버는 enp0s9 → enp0s8을 거쳐서, nat-gw가 꺼지면 두 방향 모두 끊깁니다.
+
+| 랜카드 | 연결 방식 | IP | firewalld 존 | 역할 |
+|---|---|---|---|---|
+| enp0s3 | VirtualBox NAT | 10.0.2.15 | external | 인터넷 출구 (masquerade) |
+| enp0s8 | 호스트 전용 | 192.168.56.2 | internal | 내부 서버들의 기본 게이트웨이 |
+| enp0s9 | 어댑터에 브리지 | 192.168.0.224 (고정) | external | 강의실 PC 접속 입구 (포트포워딩) |
+
+**설정 순서**
+
+| 단계 | 서버 | 내용 |
+|---|---|---|
+| 1 | nat-gw | VirtualBox 랜카드 3개 (NAT · 호스트 전용 · 브리지) |
+| 2 | nat-gw | IP 포워딩 `net.ipv4.ip_forward = 1` (`/etc/sysctl.d/99-ipforward.conf`) |
+| 3 | nat-gw | 방화벽 존 — enp0s3 · enp0s9 → external, enp0s8 → internal |
+| 4 | nat-gw | 마스커레이드 — 내부 서버의 출발지 IP를 nat-gw IP로 바꿔 내보냄 |
+| 5 | nat-gw | 정책 `int2ext` — internal → external 통과 허용 (ACCEPT) |
+| 6 | nat-gw | 브리지 IP 192.168.0.224 고정 · `never-default yes` |
+| 7 | nat-gw | 포트포워딩 — 외부 포트 끝 두 자리 = 내부 IP 끝자리 (SSH) + 웹 80 · HAProxy 8404 · Kibana 5601 · Grafana 3000 |
+| 8 | 내부 서버 전부 | 기본 경로를 nat-gw(192.168.56.2)로 · VirtualBox NAT는 기본 경로에서만 제외 |
+
 ```bash
-# ✏️ 사용한 명령 (예: IP 포워딩 켜기 · firewalld masquerade · 포트 포워딩)
+# nat-gw 핵심 (2 ~ 5단계)
+echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-ipforward.conf && sysctl -p /etc/sysctl.d/99-ipforward.conf
+nmcli con mod enp0s3 connection.zone external
+nmcli con mod enp0s9 connection.zone external
+nmcli con mod enp0s8 connection.zone internal
+firewall-cmd --permanent --zone=external --add-masquerade
+firewall-cmd --permanent --new-policy int2ext
+firewall-cmd --permanent --policy int2ext --add-ingress-zone internal
+firewall-cmd --permanent --policy int2ext --add-egress-zone external
+firewall-cmd --permanent --policy int2ext --set-target ACCEPT
+firewall-cmd --reload
 ```
-- **확인 방법**: ✏️ (예: 외부 PC 브라우저에서 http://192.168.0.224 접속)
+
+**강의실 PC에서 접속** — 주소는 `192.168.0.224` 하나, 포트로 서버를 고름
+
+| 대상 | 접속 |
+|---|---|
+| 서비스 화면 | http://192.168.0.224 (→ HAProxy :80) |
+| HAProxy 통계 · Kibana · Grafana | `:8404/stats` · `:5601` · `:3000` |
+| SSH | `ssh -p 22<IP 끝자리> root@192.168.0.224` (예: 2221 → mysql-source) |
+| DB (3306 · 27017) | 바깥에 열지 않음 → 해당 서버 SSH 포트로 SSH 터널 |
+
+**확인**: 내부 서버에서 `ip route get 8.8.8.8` → `via 192.168.56.2 dev enp0s8`, `ping -c 2 8.8.8.8` → **ttl=62** (nat-gw를 한 번 거침) · 11/09 11대 모두 확인
+
+**켜는 순서**: nat-gw → DB → mw · es → web → lb → monitor (nat-gw가 먼저 켜져야 다른 서버가 인터넷에 나감)
 
 ---
 
