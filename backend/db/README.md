@@ -14,7 +14,7 @@
 | `schema.sql` | v2 1~5절 (테이블 14개 + 뷰) + 구현용 `MEMBER_SESSION` · `IF NOT EXISTS`라 여러 번 실행해도 안전 |
 | `sample-data.sql` | v2 6절 예시 데이터 (Stardew Valley) |
 
-### 테이블 (14개 + 구현용 1개)
+### 테이블 15개 (설계 14개 + 로그인 세션 1개)
 
 | 테이블 | 채우는 스크립트 |
 |---|---|
@@ -25,7 +25,7 @@
 | GAME_KEYWORD (의도적 반정규화) | `keywords:aggregate` |
 | MEMBER · WISHLIST | 웹 회원가입 · 찜 API |
 | API_SYNC_LOG | 모든 Steam API 호출이 자동 기록 |
-| **MEMBER_SESSION** (v2에 없음, 구현용) | 로그인 쿠키 토큰(SHA-256) · 24시간 만료 |
+| **MEMBER_SESSION** (구현할 때 추가 · ERD 포함) | 로그인 쿠키 토큰(SHA-256) · 24시간 만료 |
 
 뷰 `V_GAME_SUMMARY`: 할인율 · 한국어 긍정률 · 마지막 리뷰 시각을 계산해서 보여줌 (메인 목록 API가 사용).
 
