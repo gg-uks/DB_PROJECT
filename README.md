@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/34724391/README.md)
 # PLAYLOG — 스팀 한국어 리뷰 키워드 분석 플랫폼
 
 > DB 프로젝트 · 팀원 김남국 · 한예찬 · 황시영
@@ -8,7 +7,7 @@
 
 ![PLAYLOG ERD](docs/images/erd.png)
 
-- **MySQL 테이블 14개 · 모두 3NF** — `GAME_KEYWORD`만 화면 속도를 위한 의도적 반정규화
+- **MySQL 테이블 15개** = 설계 14개(모두 3NF · `GAME_KEYWORD`만 화면 속도를 위한 의도적 반정규화) + 로그인 세션 `MEMBER_SESSION`
 - 왼쪽 열 = 논리 이름(한글) · 가운데 = 물리 이름 · 오른쪽 = MySQL 타입 (ERDCloud)
 - 실선 = 식별 관계 (부모 키가 자식 PK의 일부) · 점선 = 비식별 관계 (`GAME` → `REVIEW`)
 - 리뷰 **본문(비정형)** 은 MongoDB `review_text` 에 두고 `REVIEW.mongo_id` 로 1:1 연결
@@ -105,6 +104,12 @@ erDiagram
     varchar nickname "닉네임"
     datetime created_at "가입일"
   }
+  MEMBER_SESSION {
+    char token_hash PK "세션 토큰 해시(SHA-256)"
+    bigint member_id FK "회원 번호"
+    datetime expires_at "만료 시각"
+    datetime created_at "생성 시각"
+  }
   WISHLIST {
     bigint member_id PK,FK "회원 번호"
     int appid PK,FK "앱 번호"
@@ -131,6 +136,7 @@ erDiagram
   GAME ||--o{ GAME_KEYWORD : "appid"
   KEYWORD ||--o{ GAME_KEYWORD : "keyword_id"
   MEMBER ||--o{ WISHLIST : "member_id"
+  MEMBER ||..o{ MEMBER_SESSION : "member_id"
   GAME ||--o{ WISHLIST : "appid"
 ```
 </details>
@@ -139,10 +145,10 @@ erDiagram
 |---|---|
 | 게임 · 분류 | `GAME` · `GENRE` · `GAME_GENRE` · `CATEGORY` · `GAME_CATEGORY` · `COMPANY` · `GAME_COMPANY` |
 | 리뷰 · 키워드 | `REVIEW` · `KEYWORD` · `REVIEW_KEYWORD` · `GAME_KEYWORD`(반정규화) |
-| 회원 · 수집 | `MEMBER` · `WISHLIST` · `API_SYNC_LOG`(FK 없는 로그) |
+| 회원 · 수집 | `MEMBER` · `WISHLIST` · `MEMBER_SESSION`(로그인 세션) · `API_SYNC_LOG`(FK 없는 로그) |
 | 뷰 | `V_GAME_SUMMARY` — 할인율 · 긍정률 · 마지막 리뷰 시각 (계산값은 저장하지 않음) |
 
-설계 과정: 요구사항 명세(19문장) → 엔티티 8 · 관계 7 (E-R 다이어그램) → 비정규형 → 1NF → 2NF → 3NF → 물리 설계(타입 · 도메인 · 인덱스)
+설계 과정: 요구사항 명세(19문장) → 엔티티 8 · 관계 7 (E-R 다이어그램) → 비정규형 → 1NF(8개) → 2NF(13개) → 3NF(13개) → 물리 설계(반정규화 1 + 로그인 세션 1 = 15개 · 타입 · 도메인 · 인덱스)
 
 ---
 

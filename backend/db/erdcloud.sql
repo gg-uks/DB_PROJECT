@@ -2,7 +2,7 @@
 --  PLAYLOG — ERDCloud 가져오기용 DDL (MySQL)
 --  ERDCloud: 새 ERD → 상단 메뉴 [가져오기(Import)] → SQL → 아래 전체 붙여넣기
 --    · 테이블 COMMENT = 논리 테이블명 · 컬럼 COMMENT = 논리 컬럼명
---    · 설계 14개 테이블 (로그인 세션 MEMBER_SESSION은 구현용이라 제외)
+--    · 테이블 15개 = 설계 14개 + 로그인 세션 MEMBER_SESSION (구현할 때 추가)
 --    · 외래키는 맨 아래 ALTER TABLE로 따로 추가 → 관계선이 자동으로 그려짐
 --    · 실제 DB(schema.sql)에만 있는 것: 보조 인덱스 · CHECK 2개 · 뷰 V_GAME_SUMMARY
 -- =====================================================================
@@ -126,6 +126,14 @@ CREATE TABLE WISHLIST (
   PRIMARY KEY (member_id, appid)
 ) COMMENT = '찜';
 
+CREATE TABLE MEMBER_SESSION (
+  token_hash CHAR(64)        NOT NULL COMMENT '세션 토큰 해시',
+  member_id  BIGINT UNSIGNED NOT NULL COMMENT '회원 번호',
+  expires_at DATETIME        NOT NULL COMMENT '만료 시각',
+  created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 시각',
+  PRIMARY KEY (token_hash)
+) COMMENT = '로그인 세션';
+
 CREATE TABLE API_SYNC_LOG (
   log_id      BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '로그 번호',
   api         VARCHAR(40)       NOT NULL COMMENT 'API 이름',
@@ -152,4 +160,5 @@ ALTER TABLE REVIEW_KEYWORD ADD CONSTRAINT FK_KEYWORD_TO_REVIEW_KEYWORD FOREIGN K
 ALTER TABLE GAME_KEYWORD   ADD CONSTRAINT FK_GAME_TO_GAME_KEYWORD      FOREIGN KEY (appid)       REFERENCES GAME (appid);
 ALTER TABLE GAME_KEYWORD   ADD CONSTRAINT FK_KEYWORD_TO_GAME_KEYWORD   FOREIGN KEY (keyword_id)  REFERENCES KEYWORD (keyword_id);
 ALTER TABLE WISHLIST       ADD CONSTRAINT FK_MEMBER_TO_WISHLIST        FOREIGN KEY (member_id)   REFERENCES MEMBER (member_id);
+ALTER TABLE MEMBER_SESSION ADD CONSTRAINT FK_MEMBER_TO_MEMBER_SESSION  FOREIGN KEY (member_id)   REFERENCES MEMBER (member_id);
 ALTER TABLE WISHLIST       ADD CONSTRAINT FK_GAME_TO_WISHLIST          FOREIGN KEY (appid)       REFERENCES GAME (appid);
