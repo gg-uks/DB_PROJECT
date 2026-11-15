@@ -120,7 +120,7 @@ rule_files:
 
 - 로그인 `admin` / `CHANGE_ME_GRAFANA`
 - MySQL 데이터 소스 `mysql`: 192.168.56.23:3306, DB `steam`, 사용자 `grafana` (읽기 전용) — mysql-replica 방화벽 3306 ← .42 추가
-- 대시보드는 `gen_dash.py`로 JSON 생성 → Grafana에서 Import (`playlog_dashboard.json`, GitHub 보관)
+- 대시보드는 `gen_dash.py`로 JSON 생성 → Grafana에서 Import. 이후 화면에서 고친 최종본은 `infra/vm/monitor/etc/grafana/playlog_dashboard.json` (11/14 Grafana 13 Export as code · V2 resource, 30개 패널)
 
 **고친 것**
 | 문제 | 해결 |
@@ -208,8 +208,8 @@ wc -c /etc/alertmanager/slack_webhook     # 81 (여러 번 붙여넣으면 길�
 route:
   receiver: default
   group_by: ['alertname', 'instance']
-  group_wait: 30s
-  group_interval: 5m
+  group_wait: 10s        # 11/14 30s → 10s
+  group_interval: 1m     # 11/14 5m → 1m ([해결] 알림이 최대 5분 늦던 것 해결)
   repeat_interval: 1h
 receivers:
   - name: default
@@ -232,10 +232,13 @@ curl -XPOST -H 'Content-Type: application/json' 127.0.0.1:9093/api/v2/alerts -d 
 | 설정 | 의미 |
 |---|---|
 | `for` | 조건이 그 시간 동안 계속돼야 발생 (순간 튐 무시) |
-| group_wait 30s | 첫 알림은 30초 모아서 한 번에 |
-| group_interval 5m | 같은 묶음에 새 알림이 붙으면 5분 간격 |
+| group_wait 10s | 첫 알림은 10초 모아서 한 번에 (11/14 30s → 10s) |
+| group_interval 1m | 같은 묶음의 다음 알림([해결] 포함)은 1분 간격 (11/14 5m → 1m) |
 | repeat_interval 1h | 해결 안 되면 1시간마다 다시 |
 | send_resolved | 해결되면 ✅ [해결] 메시지 |
+
+- 알림이 오기까지: 수집 · 규칙 검사(15초 간격) 0~30초 + 규칙 `for` + group_wait 10초 → MySQL 복제 중단 약 1분, MongoDown 약 1분 30초. [해결]은 복구 후 1분 안쪽
+- 참고: 복제를 멈추면 Source slow log에 `repl@mysql-replica … Binlog Dump GTID`가 Query_time 수십만 초로 1건 남음 (오래 열려 있던 복제 연결이 닫힌 것, `log_slow_admin_statements = ON` 때문). Grafana "MySQL 느린 쿼리" 패널이 5분간 올라가지만 실제 느린 쿼리는 아님
 
 ## 12. 대시보드 v4 — 웹 · 미들웨어 구역 (11/10 완료, 30개 패널)
 

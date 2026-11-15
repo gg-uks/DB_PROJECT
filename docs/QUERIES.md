@@ -252,13 +252,17 @@ EXPLAIN ANALYZE SELECT k.word, SUM(gk.review_cnt) c FROM GAME_KEYWORD gk JOIN KE
 SHOW INDEX FROM REVIEW;
 ```
 
-측정 결과 (로컬 MariaDB 10.11 · 가짜 데이터 · 30회 중앙값, 재현 방법은 [`backend/db/perf/`](../backend/db/perf/README.md)):
+측정 결과 (**VM mysql-replica · MySQL 8.4 · 실제 `steam` DB · appid 413150(스타듀밸리)** · 30회 중앙값, 2026-11-12 · C-6은 11-14). 재현 방법은 [`backend/db/perf/`](../backend/db/perf/README.md) (`G=413150`)
 
 | 비교 | 없을 때 / 흔한 방식 | 있을 때 / 바꾼 방식 |
 |---|---|---|
-| 추천 리뷰 수 · `idx_review_vote` | ALL 7,457행 · 1.36 ms (10배 데이터: 10.34 ms) | ref 125행 · 0.13 ms (0.35 ms) |
-| 플레이 시간대 · `idx_review_play` | ALL 7,457행 · 1.17 ms (11.08 ms) | range · 0.11 ms (0.16 ms) |
-| 상위 키워드 정렬 · `idx_gk_rank` | filesort · 0.34 ms (1.56 ms) | 정렬 없음 · 0.14 ms (0.18 ms) |
-| 게임별 통계 (E-3) | JOIN 후 집계: 14,284 ms · 값이 틀림 | 집계 후 JOIN: 9 ms · 정확 |
-| 키워드 비율 (C-5) | 3중 JOIN 실시간 집계: 1.71 ms (16.0 ms) | GAME_KEYWORD: 0.95 ms (8.0 ms) |
-| 페이지 넘기기 (B-2) | OFFSET 70000: 10.4 ms | 키셋 `review_id > ?`: 0.63 ms |
+| 추천 리뷰 수 · `idx_review_vote` | ALL 6,124행(추정) · 1.51 ms | ref 125행 · 0.18 ms |
+| 플레이 시간대 · `idx_review_play` | ALL 6,124행(추정) · 1.45 ms | range 68행 · 0.20 ms |
+| 상위 키워드 정렬 · `idx_gk_rank` | PRIMARY 786행 · 0.41 ms | idx_gk_rank 313행 · 0.25 ms |
+| 게임별 통계 (E-3) | JOIN 후 집계: 4,971.8 ms · 값이 틀림 (appid 570 추천 리뷰 125 → 203,000 = 125 × 키워드 1,624) | 집계 후 JOIN: 6.82 ms · 정확 |
+| 키워드 비율 (C-5) | 3중 JOIN 실시간 집계: 1.42 ms | GAME_KEYWORD: 0.87 ms |
+| 시간대별 키워드 (C-6) · 3중 JOIN 전체 | REVIEW ALL 6,130행 · 2.65 ms (`IGNORE INDEX`) | range `idx_review_play` 68행 · 1.03 ms |
+| 페이지 넘기기 (B-2) — 참고 | OFFSET 70000: 10.4 ms | 키셋 `review_id > ?`: 0.63 ms |
+
+- B-2는 리뷰 75,000건 테스트 DB(`perf10`) 값 (실제 DB는 리뷰가 그만큼 없음)
+- C-5는 자주 여는 화면이라 GAME_KEYWORD로 미리 집계, C-6은 구간 버튼을 누를 때만 실행돼 인덱스로 범위를 좁힌 3중 JOIN으로 처리
