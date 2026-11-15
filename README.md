@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/34874018/README.md)
 # PLAYLOG — 스팀 한국어 리뷰 키워드 분석 플랫폼
 
 > DB 프로젝트 · 팀원 김남국 · 한예찬 · 황시영
@@ -174,9 +175,8 @@ erDiagram
 |---|---|---|
 | 김남국 · 한예찬 · 황시영 | DB 설계 (요구사항 · ERD · 정규화) | 위 [ERD](#-db-설계-erd) |
 | 김남국 | HAProxy · WEB1/WEB2 · MySQL Source/Replica · Redis(Valkey) · Kafka · Elasticsearch | [`docs/INFRA.md`](docs/INFRA.md) · [`docs/QUERIES.md`](docs/QUERIES.md) |
-| 황시영 | 인프라 세팅 · NAT 게이트웨이 · 네트워크 | [`docs/NAT.md`](docs/NAT.md) |
-| 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/NAT.md`](docs/NAT.md) | NAT 게이트웨이 설정 순서 (랜카드 3개 · 마스커레이드 · 포트포워딩 · 내부 서버 기본 경로) · 접속 포트 표 · 문제 해결 |
-| [`docs/MONGODB.md`](docs/MONGODB.md) |
+| 황시영 | 인프라 세팅 · NAT 게이트웨이 · 네트워크 (NAT 설정 순서 · 접속 포트 표 · 문제 해결) | [`docs/NAT.md`](docs/NAT.md) |
+| 한예찬 | MongoDB 복제 세트 · 클러스터 (.22 · .24 · .25) | [`docs/MONGODB.md`](docs/MONGODB.md) |
 | 한예찬 · 김남국 · 황시영 | 백업 서버 (.41) · 모니터링 (.42) · 백업 전략 | [`docs/BACKUP.md`](docs/BACKUP.md) · [`docs/MONITORING.md`](docs/MONITORING.md) |
 
 ## 🗺️ 아키텍처
@@ -415,7 +415,8 @@ rs.status().members.map(m => [m.name, m.stateStr])        // PRIMARY 1 · SECOND
 
 ```
 [각 서버 exporter] ──scrape(15s)──▶ Prometheus(.42:9090) ──▶ Alertmanager(.42:9093) ──▶ Slack
- backup .41 textfile (백업 · binlog · cold 지표)    └──▶ Grafana(.42:3000) ◀── MySQL datasource(.23)
+                                    └──▶ Grafana(.42:3000) ◀── MySQL datasource(.23)
+ ※ backup .41은 textfile exporter로 백업 · binlog · cold 지표를 함께 보냄
 ```
 
 | 수집 대상 (job) | 대상 | 포트 |
