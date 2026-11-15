@@ -111,7 +111,7 @@ GRANT REPLICATION_APPLIER, SESSION_VARIABLES_ADMIN ON *.* TO 'restore'@'192.168.
 - `mysql_backup.sh`: `--set-gtid-purged=OFF` → **`COMMENTED`** (이전판 `.v1`, 원본 `.orig`)
 - 첫 실행 실패: `Couldn't execute 'FLUSH TABLES': Access denied; you need RELOAD or FLUSH_TABLES` → 넓은 `RELOAD` 대신 **`FLUSH_TABLES`** 권한만 추가 → 성공
 - 덤프 맨 위에 `/* SET @@GLOBAL.GTID_PURGED='+23dad2da-…:1-8072, 55706265-…:1-2';*/` (주석이라 기존 복원 방식 그대로)
-- 📌 **발견**: `55706265-…:1-2`는 **Replica 자신의 UUID** → Replica에서 직접 실행된 트랜잭션 2개 (errant GTID). PITR엔 영향 없음, Replica 승격 시 주의
+- 📌 **발견**: `55706265-…:1-2`는 **Replica 자신의 UUID** → Replica에서 직접 실행된 트랜잭션 2개 (errant GTID). PITR엔 영향 없음, Replica 승격 시 주의 → 2026-11-14 정리 완료 (아래 'errant GTID 정리' 절)
 
 **PITR 리허설 (14:20)** — 테스트 회원 INSERT → 3초 뒤 DELETE (사고)
 | 확인 | 결과 |
@@ -283,7 +283,7 @@ systemctl start mongod
 | `COMMENTED` 덤프 `Access denied … RELOAD or FLUSH_TABLES` | GTID를 정확히 찍으려고 짧은 FTWRL 사용 | 좁은 권한 `FLUSH_TABLES`만 추가 (그대로 뒀으면 그날 밤 04:00 덤프 실패) |
 | v1 복원 테스트가 PITR을 망가뜨릴 수 있음 | 복원 작업이 binlog에 기록됨 | `sql_log_bin=0` + `--skip-gtids` · `--disable-log-bin` |
 | 같은 서버에 binlog 재적용 시 건너뜀 위험 | GTID가 이미 실행된 것으로 처리 | `--skip-gtids` |
-| Replica에서 계정 생성 시 errant GTID | super_read_only Replica에 직접 쓰기 | 기존 `exporter@localhost` 설정 파일 재사용 |
+| Replica에서 계정 생성 시 errant GTID | super_read_only Replica에 직접 쓰기 | 기존 `exporter@localhost` 설정 파일 재사용 (11-14 정리 완료) |
 | 오프라인 백업이 지난달 파일을 "성공"으로 가져갈 위험 | `latest.tar.gz`가 실패 시 옛 파일을 가리킴 | 원격 `cold_send.sh`가 24시간 이내 파일만 전송 |
 | 지표 cron이 죽으면 binlog 상태가 계속 "정상" | textfile 마지막 값 유지 | 알림에 `node_textfile_mtime_seconds` 15분 조건 추가 |
 | `PTY allocation request failed` | `restrict` 옵션 | `ssh -T` |
@@ -338,6 +338,48 @@ systemctl start mongod
 - [ ] 2026-11-15(일) 05:00 첫 weekly 승격 확인 — `tail /backup/archive/rotate.log`
 - [ ] 2026-12-01 첫 월간 자동 실행 확인 — `cold.log`(.23 · .25) · `/backup/cold/pull.log` · `/backup/restore_test.log`
 - [ ] 매주 호스트 PC 사본 (PowerShell 두 줄)
+
+---
+
+## 10. errant GTID 정리 (2026-11-14)
+
+**무엇이었나**
+- 백업 덤프 맨 위 GTID 목록에 Replica 자신의 UUID(`55706265-da73-11f1-b3b5-080027872631:1-2`)가 섞여 있었음 → Replica에서 직접 실행된 트랜잭션 2건 (errant GTID)
+- 평소 운영 · 복제 · PITR엔 영향 없음. Replica를 Source로 승격하거나 Replica 기준으로 새 복제 서버를 만들 때 복제가 꼬일 수 있음
+
+**원인 (Replica binlog로 확인)**
+```bash
+# mysql-replica(.23), /var/lib/mysql
+mysqlbinlog --include-gtids='55706265-da73-11f1-b3b5-080027872631:1-2' -v mysql-bin.0*
+```
+| GTID | 내용 |
+|---|---|
+| `55706265-…:1` | `ALTER USER 'playlog'@'192.168.56.%' IDENTIFIED WITH caching_sha2_password …` (Replica에서만 서비스 계정 비밀번호 설정) |
+| `55706265-…:2` | `GRANT SELECT ON steam.* TO 'playlog'@'192.168.56.%'` (Replica에서만 읽기 권한 부여) |
+
+→ readPool(Replica 읽기) 연결을 맞추려고 Replica에 직접 실행한 작업으로 보임
+
+**정리 전 상태**
+- Source(.21) `@@gtid_executed` = `23dad2da-da74-11f1-b2dc-080027c97124:1-8417`
+- Replica(.23) `@@gtid_executed` = `23dad2da-…:1-8417, 55706265-da73-11f1-b3b5-080027872631:1-2`
+
+**조치 — Source(.21)에서만 실행, 데이터 변경 없음**
+같은 GTID 번호로 빈 트랜잭션을 넣어 Source의 실행 목록을 Replica와 맞춤
+```sql
+SET GTID_NEXT = '55706265-da73-11f1-b3b5-080027872631:1'; BEGIN; COMMIT;
+SET GTID_NEXT = '55706265-da73-11f1-b3b5-080027872631:2'; BEGIN; COMMIT;
+SET GTID_NEXT = 'AUTOMATIC';
+```
+
+**결과**
+- Source `@@gtid_executed` = `23dad2da-…:1-8417, 55706265-…:1-2` → Replica와 동일
+- Replica `SHOW REPLICA STATUS`: IO · SQL Running = Yes, `Seconds_Behind_Source` = 0, `Last_SQL_Error` 없음
+- playlog 권한 비교 (`SHOW GRANTS FOR 'playlog'@'192.168.56.%'`): Source · Replica 모두 `GRANT ALL PRIVILEGES ON steam.*` 로 동일 (이후 Source의 GRANT가 복제되어 덮음)
+- 비밀번호: 백엔드가 같은 설정으로 Source · Replica 둘 다 정상 접속 → 실사용상 동일
+
+**재발 방지**
+- Replica(`super_read_only`)에는 직접 쓰지 않음 — 계정 · 권한 변경은 **Source에서만** 하고 복제로 전달
+- Replica 상태 확인은 기존 `exporter@localhost`(`/etc/.mysqld_exporter.cnf`) 재사용
 
 ---
 

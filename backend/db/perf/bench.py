@@ -4,7 +4,7 @@ def conn(db):
     return pymysql.connect(user=os.getenv("DB_USER", "root"), password=os.getenv("DB_PASS", ""),
                            unix_socket=os.getenv("DB_SOCKET", "/run/mysqld/mysqld.sock"), database=db, charset="utf8mb4")
 
-G = 1005
+G = int(os.getenv("G", "1005"))   # 실제 DB 측정은 G=413150 (스타듀밸리)
 Q = {
  "kw_pre": f"SELECT k.word, SUM(gk.review_cnt) c FROM GAME_KEYWORD gk JOIN KEYWORD k USING (keyword_id) WHERE gk.appid={G} AND gk.voted_up=1 GROUP BY k.word ORDER BY c DESC, k.word LIMIT 10",
  "kw_live": f"SELECT k.word, COUNT(*) c FROM REVIEW r JOIN REVIEW_KEYWORD rk ON rk.review_id=r.review_id JOIN KEYWORD k ON k.keyword_id=rk.keyword_id WHERE r.appid={G} AND r.voted_up=1 GROUP BY k.word ORDER BY c DESC, k.word LIMIT 10",
@@ -12,6 +12,15 @@ Q = {
  "cnt_noidx": f"SELECT COUNT(*) FROM REVIEW IGNORE INDEX (idx_review_vote, uk_review_author_game, idx_review_play) WHERE appid={G} AND voted_up=1",
  "band_idx": f"SELECT COUNT(*) FROM REVIEW WHERE appid={G} AND playtime_at_review < 600",
  "band_noidx": f"SELECT COUNT(*) FROM REVIEW IGNORE INDEX (idx_review_vote, uk_review_author_game, idx_review_play) WHERE appid={G} AND playtime_at_review < 600",
+ "c6_idx": f"""SELECT k.word, COUNT(*) AS review_cnt
+   FROM REVIEW r JOIN REVIEW_KEYWORD rk ON rk.review_id = r.review_id JOIN KEYWORD k ON k.keyword_id = rk.keyword_id
+   WHERE r.appid = {G} AND r.playtime_at_review < 600
+   GROUP BY k.word ORDER BY review_cnt DESC, k.word LIMIT 12""",
+ "c6_noidx": f"""SELECT k.word, COUNT(*) AS review_cnt
+   FROM REVIEW r IGNORE INDEX (idx_review_vote, uk_review_author_game, idx_review_play)
+   JOIN REVIEW_KEYWORD rk ON rk.review_id = r.review_id JOIN KEYWORD k ON k.keyword_id = rk.keyword_id
+   WHERE r.appid = {G} AND r.playtime_at_review < 600
+   GROUP BY k.word ORDER BY review_cnt DESC, k.word LIMIT 12""",
  "rank_idx": f"SELECT keyword_id, review_cnt FROM GAME_KEYWORD WHERE appid={G} AND voted_up=1 ORDER BY review_cnt DESC LIMIT 10",
  "rank_noidx": f"SELECT keyword_id, review_cnt FROM GAME_KEYWORD IGNORE INDEX (idx_gk_rank) WHERE appid={G} AND voted_up=1 ORDER BY review_cnt DESC LIMIT 10",
  "stat_derived": """SELECT g.appid, COALESCE(r.pos,0) pos, COALESCE(k.kw,0) kw, COALESCE(w.wished,0) wished FROM GAME g
