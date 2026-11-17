@@ -247,6 +247,19 @@ pm2 startup systemd         # 재부팅 후 자동 시작 (출력되는 명령�
 ```
 - `.env`를 바꾼 뒤에는 `pm2 restart api consumer --update-env`
 - 코드를 바꾼 뒤에는 `git pull && npm ci && npm run build -w frontend && pm2 restart all`
+- ⚠️ `pm2 startup systemd`가 만든 `pm2-root.service`는 `Type=forking` + `PIDFile`이라, Rocky의 SELinux가 PID 파일 읽기를 막으면 systemd가 "시작 실패"로 판단하고 pm2 전체를 1~2분마다 껐다 켠다 (새벽 수집이 중간에 끊김). 원래 서비스 파일은 두고 덧붙임 설정으로 PID 파일 확인을 끈다 (**WEB2 → WEB1 순서**로 한 대씩).
+  ```bash
+  mkdir -p /etc/systemd/system/pm2-root.service.d
+  cat > /etc/systemd/system/pm2-root.service.d/override.conf <<'EOF'
+  [Service]
+  Type=oneshot
+  RemainAfterExit=yes
+  PIDFile=
+  Restart=no
+  EOF
+  systemctl daemon-reload && systemctl restart pm2-root
+  ```
+  `Type=oneshot`은 `pm2 resurrect`가 끝나면 시작 완료로 보고, `RemainAfterExit=yes`는 서비스를 "켜짐"으로 유지해 `stop` 때 `pm2 kill`이 실행되게 한다. 확인은 `systemctl is-active pm2-root`와 `journalctl -u pm2-root --since "10 min ago" | grep -c Failed`(0)로 한다.
 
 ---
 
@@ -627,3 +640,4 @@ curl -s 'http://192.168.56.10/api/analytics/games/413150/wordcloud?side=pos' | h
 | 셸에서 SQL을 입력해 오류 | bash 프롬프트에 SQL을 바로 씀 | `mysql -u … -p` 접속 후 `mysql>`에서, 또는 `mysql -e "…"` |
 | MySQL 8 `ONLY_FULL_GROUP_BY` 오류 | `GROUP BY DATE(req_at)` 처럼 SELECT 식과 다름 | SELECT 별칭으로 `GROUP BY day` |
 | MongoDB `requires authentication` | 인증이 켜진 복제 세트에 계정 없이 접속 | 앱 전용 계정(`readWrite@playlog`) + `authSource=playlog` |
+| pm2가 1~2분마다 재시작 · 새벽 수집이 중간에 끊김 | pm2-root.service가 SELinux로 PID 파일을 못 읽음 (`journalctl -u pm2-root`: Can't open PID file … Permission denied) | `/etc/systemd/system/pm2-root.service.d/override.conf`로 `Type=oneshot` · `RemainAfterExit=yes` · `PIDFile=` 비우기 · `Restart=no` |
