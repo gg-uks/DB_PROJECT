@@ -332,12 +332,11 @@ systemctl start mongod
 
 ## 9. 남은 일
 
-- [ ] 황시영 님께 공유 (덤프 옵션 · backup/restore 계정 권한 · errant GTID)
-- [ ] 대시보드 v5 GitHub 커밋 (높이 조정본으로 다시 Import)
-- [ ] 발표 수정: 29장(백업 전략 표 · RPO 24시간 → 거의 0) · 30장(시연 ⑤ PITR) · 31장(알림 17개) · 33장(한계: 진짜 외부 보관 아님)
-- [ ] 2026-11-15(일) 05:00 첫 weekly 승격 확인 — `tail /backup/archive/rotate.log`
-- [ ] 2026-12-01 첫 월간 자동 실행 확인 — `cold.log`(.23 · .25) · `/backup/cold/pull.log` · `/backup/restore_test.log`
-- [ ] 매주 호스트 PC 사본 (PowerShell 두 줄)
+- [x] 황시영 님께 공유 (덤프 옵션 · backup/restore 계정 권한 · errant GTID)
+- [x] 대시보드 v5 GitHub 커밋 (높이 조정본으로 다시 Import)
+- [x] 발표 수정: 29장(백업 전략 표 · RPO 24시간 → 거의 0) · 30장(시연 ⑤ PITR) · 31장(알림 17개) · 33장(한계: 진짜 외부 보관 아님)
+- [x] 2026-11-15(일) 05:00 첫 weekly 승격 확인 — `tail /backup/archive/rotate.log`
+- [x] 매주 호스트 PC 사본 (PowerShell 두 줄)
 
 ---
 
